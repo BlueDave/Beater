@@ -1,95 +1,3 @@
-$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
-$LogLevel = 'Debug'
-$ConsoleLevel = 'Debug'
-
-Import-Module Hyper-V
-
-#region Stucts
-$2019BaseImage = @{
-    Name = 'Server2019'
-    BaseImage = 'C:\WSUS\BaseImages\Server2019-C.vhdx'
-    InstallMedia = 'C:\Users\dkbluem1\Downloads\SW_DVD9_Win_Server_STD_CORE_2019_64Bit_English_DC_STD_MLF_X21-96581.ISO'
-    ImageIndex = 2
-    CustomISO = 'C:\WSUS\Working\Server2019-Install.ISO'
-    ProductKey = 'N69G4-B89J2-4G8F4-WWYCC-J464C'
-    UseWSUS = $True
-    UseDHCP = $True
-    UpdateSource = 'https://HPWSUS01.hobbylobby.corp:8531'
-    DisableAutoUpdates = $True
-    OptimizeDotNet = $False
-}
-
-$2016BaseImage = @{
-    Name = 'Server2016'
-    BaseImage = 'C:\WSUS\BaseImages\Server2016-C.vhdx'
-    InstallMedia = 'C:\Users\dkbluem1\Downloads\SW_DVD9_Win_Svr_STD_Core_and_DataCtr_Core_2016_64Bit_English_-2_MLF_X21-22843.ISO'
-    ImageIndex = 2
-    CustomISO = 'C:\WSUS\Working\Server2016-Install.ISO'
-    ProductKey = 'WC2BQ-8NRM3-FDDYY-2BFGV-KHKQY'
-    UseWSUS = $True
-    USeDHCP = $True
-    UpdateSource = 'https://HPWSUS01.hobbylobby.corp:8531'
-    DisableAutoUpdates = $True
-    OptimizeDotNet = $False
-}
-
-$LTSCBaseImage = @{
-    Name = 'Win10LTSC'
-    BaseImage = 'C:\WSUS\BaseImages\Win10LTSC-C.vhdx'
-    InstallMedia = 'C:\Users\dkbluem1\Downloads\SW_DVD5_WIN_ENT_LTSC_2019_64BIT_English_-2_MLF_X22-05056.ISO'
-    ImageIndex = 1
-    CustomISO = 'C:\WSUS\Working\Win10LTSC-Install.ISO'
-    ProductKey = 'M7XTQ-FN8P6-TTKYV-9D4CC-J462D'
-    UseWSUS = $True
-    USeDHCP = $True
-    UpdateSource = 'https://HPWSUS01.hobbylobby.corp:8531'
-    DisableAutoUpdates = $True
-    OptimizeDotNet = $False
-}
-
-$BeaterInstance = @{
-    Host = "LHL315574"
-    Name = "Beater"
-    DomainName = "Beater.Local"
-    NBDomainName = "Beater"
-    IPPrefix = "192.168.116"
-    Gateway = "192.168.116.1"
-    SubnetMask = "255.255.255.0"
-    SubnetLength = "24"
-    UseDHCP = $True
-    DHCPStart = 100
-    DHCPStop = 200
-    AdminName = 'Administrator'
-    AdminNBName = "Beater\Administrator"
-    AdminPassword = 'P@ssw0rd99'
-    DomainController = 'DC1'
-    DomainControllerIP = "192.168.116.50"
-    HDDPath = "C:\WSUS\Virtual Hard Disks"
-    VMPath = "C:\WSUS\Virtual Machines"
-    SnapshotPath = "C:\WSUS\Snapshots"
-    WorkingFolder = 'C:\WSUS\Working'
-    CertFolder = 'C:\WSUS\Certificates'
-    AppFolder = 'C:\WSUS\Apps'
-    VMTempFolder = 'C:\Temp'
-    SwitchName = "Beater"
-    UseNAT = $True
-    OscdimgPath = "C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe"
-    TimeZone = "Central Standard Time"
-}
-
-$SecurePassword = ConvertTo-SecureString -AsPlainText $BeaterInstance.AdminPassword -Force
-$BeaterInstance.DomainCreds = New-Object -TypeName System.Management.Automation.PSCredential($BeaterInstance.AdminNBName,$SecurePassword)
-$BeaterInstance.LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential($BeaterInstance.AdminName,$SecurePassword)
-
-
-
-#endregion
-
-#region Generics
-#OpenLogFile
-$LogFile = "$($BeaterInstance.WorkingFolder)\Beater.log"
-"`n`n`n`n" >> $LogFile
-"Start at $(Get-Date)" >> $LogFile
 
 Function Write-BTRLog {
     Param (
@@ -114,6 +22,16 @@ Function Write-BTRLog {
     }ElseIf ($Level -eq "Error") {
         Read-Host $Entry
     }
+}
+
+Function Read-BTRConfig  {
+
+    
+}
+
+Function Read-BTRConfig  {
+
+    
 }
 
 Function Wait-BTRVMOnline {
@@ -247,9 +165,7 @@ Function Get-NextIP {
     $IP = $Octets -join "."
     Return $IP
 }
-#endregion
 
-#region setup
 Function Install-BTREnvironment {
     Param (
         [Parameter(Mandatory=$True)]$Instance
@@ -1128,7 +1044,7 @@ Function Configure-BTRBaseImage {
 
     "Installing updates"
     Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
-        Install-WindowsUpdate -AcceptAll –AutoReboot
+        Install-WindowsUpdate -AcceptAll ï¿½AutoReboot
     }
 
 }
@@ -1372,9 +1288,9 @@ Function SetUp-BTRDHCPServer {
         Return
     }
 }
-#endregion
 
-#region DeployVM
+
+
 Function New-BTRVMFromTemplate {
      Param (
         [Parameter(Mandatory=$True)]$Instance,
@@ -1815,9 +1731,7 @@ Function Tweak-BTRVMPostDeloy {
         Get-ScheduledTask -TaskName ServerManager | Disable-ScheduledTask
     }
 }
-#endregion
 
-#region InstallApps
 Function Install-BTRExchange {
     Param (
         [Parameter(Mandatory=$True)]$Instance,
@@ -1973,35 +1887,33 @@ Function Install-BTRSQL {
     "Configuring Firewall"
     Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
         $FWRules = Get-NetFirewallRule
-        If (!($FWRules | Where DisplayName -Like “SQL Server”)) {
-            New-NetFirewallRule -DisplayName “SQL Server” -Direction Inbound –Protocol TCP –LocalPort 1433 -Action allow
+        If (!($FWRules | Where DisplayName -Like ï¿½SQL Serverï¿½)) {
+            New-NetFirewallRule -DisplayName ï¿½SQL Serverï¿½ -Direction Inbound ï¿½Protocol TCP ï¿½LocalPort 1433 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like “SQL Admin Connection”)) {
-            New-NetFirewallRule -DisplayName “SQL Admin Connection” -Direction Inbound –Protocol TCP –LocalPort 1434 -Action allow
+        If (!($FWRules | Where DisplayName -Like ï¿½SQL Admin Connectionï¿½)) {
+            New-NetFirewallRule -DisplayName ï¿½SQL Admin Connectionï¿½ -Direction Inbound ï¿½Protocol TCP ï¿½LocalPort 1434 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like “SQL Database Management”)) {
-            New-NetFirewallRule -DisplayName “SQL Database Management” -Direction Inbound –Protocol UDP –LocalPort 1434 -Action allow
+        If (!($FWRules | Where DisplayName -Like ï¿½SQL Database Managementï¿½)) {
+            New-NetFirewallRule -DisplayName ï¿½SQL Database Managementï¿½ -Direction Inbound ï¿½Protocol UDP ï¿½LocalPort 1434 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like “SQL Service Broker”)) {
-            New-NetFirewallRule -DisplayName “SQL Service Broker” -Direction Inbound –Protocol TCP –LocalPort 4022 -Action allow
+        If (!($FWRules | Where DisplayName -Like ï¿½SQL Service Brokerï¿½)) {
+            New-NetFirewallRule -DisplayName ï¿½SQL Service Brokerï¿½ -Direction Inbound ï¿½Protocol TCP ï¿½LocalPort 4022 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like “SQL Debugger/RPC”)) {
-            New-NetFirewallRule -DisplayName “SQL Debugger/RPC” -Direction Inbound –Protocol TCP –LocalPort 135 -Action allow
+        If (!($FWRules | Where DisplayName -Like ï¿½SQL Debugger/RPCï¿½)) {
+            New-NetFirewallRule -DisplayName ï¿½SQL Debugger/RPCï¿½ -Direction Inbound ï¿½Protocol TCP ï¿½LocalPort 135 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like “SQL Browser”)) {
-            New-NetFirewallRule -DisplayName “SQL Browser” -Direction Inbound –Protocol TCP –LocalPort 2382 -Action allow
+        If (!($FWRules | Where DisplayName -Like ï¿½SQL Browserï¿½)) {
+            New-NetFirewallRule -DisplayName ï¿½SQL Browserï¿½ -Direction Inbound ï¿½Protocol TCP ï¿½LocalPort 2382 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like “SQL Server Browse Button Service”)) {
-            New-NetFirewallRule -DisplayName “SQL Server Browse Button Service” -Direction Inbound –Protocol UDP –LocalPort 1433 -Action allow
+        If (!($FWRules | Where DisplayName -Like ï¿½SQL Server Browse Button Serviceï¿½)) {
+            New-NetFirewallRule -DisplayName ï¿½SQL Server Browse Button Serviceï¿½ -Direction Inbound ï¿½Protocol UDP ï¿½LocalPort 1433 -Action allow
         }
     }
 
     #Install SSMS
     Install-BTRSofware -Name "SQL Server Management Studio" -Instance $BeaterInstance -VMName DB1 -Installer "SSMS-Setup-ENU.exe" -WebLink 'https://aka.ms/ssmsfullsetup' -Args "/install /quiet /passive /norestart"
 }
-#endregion
 
-#region Misc
 Function New-BtrUsers {
     Param (
         [Parameter(Mandatory=$True)]$Instance,
@@ -2031,34 +1943,3 @@ Function New-BtrUsers {
 
 
 }
-
-#endregion
-
-
-
-
-#Install-BTREnvironment -Instance $BeaterInstance
-#Install-BRTADK -BaseImage $2019BaseImage
-
-#Create-BTRISO -BaseImage $LTSCBaseImage -Instance $BeaterInstance
-#Create-BTRBaseVM -BaseImage $LTSCBaseImage -Instance $BeaterInstance
-#Configure-BTRBaseImage -BaseImage $LTSCBaseImage -Instance $BeaterInstance
-#Prep-BTRBaseImage -BaseImage $2019BaseImage
-
-#Install-BTRDomain -Instance $BeaterInstance
-#Configure-BTRDomain -Instance $BeaterInstance
-#SetUp-BTRDHCPServer -Instance $BeaterInstance
-
-#$ComputerName = 'AV1'
-#New-BTRVMFromTemplate -Instance $BeaterInstance -VMName $ComputerName -BaseImage $2019BaseImage
-#$IP = Get-NextIP -Instance $BeaterInstance
-#Add-BtrDNSRecord -Instance $BeaterInstance  -RecordName $ComputerName -IPAddress $IP
-#Apply-BTRVMCustomConfig -VMName $ComputerName -Instance $BeaterInstance -IpAddress $IP -JoinDomain $True -BaseImage $LTSCBaseImage
-#Start-VM -Name $ComputerName
-#Wait-BTRVMOnline -VMName $ComputerName -Instance $BeaterInstance
-#Tweak-BTRVMPostDeloy -Instance $BeaterInstance -VMName $ComputerName
-#[System.Windows.MessageBox]::Show('Done')
-
-#Delete-BTRVM -Instance $BeaterInstance -VmName Win10LTSC
-
-#Install-BTRSQL -Instance $BeaterInstance -VMName DB1 -SQLISO "C:\Users\dkbluem1\Downloads\SW_DVD9_NTRL_SQL_Svr_Standard_Edtn_2019Nov2019_64Bit_English_OEM_VL_X22-18928.ISO"
