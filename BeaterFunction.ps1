@@ -29,9 +29,53 @@ Function Read-BTRConfig  {
     
 }
 
-Function Read-BTRConfig  {
+Function Write-BTRConfig  {
+    [Parameter(Mandatory=$True)]$BeaterHost
 
+    $RegRoot = "HKLM:\SOFTWARE\HobbyLobby\"
+
+    #Test and create root of config
+    If (!(Test-Path "$RegRoot\Beater" -ErrorAction SilentlyContinue)) {
+        $Error.Clear()
+        New-Item -Path $RegRoot -Name "Beater" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
+        If ($Error) {
+                Write-BTRLog "Can't create Beater registry" -Level Error
+                Return $false
+        }
+    }
+
+    #Test and create RootPath
+    If (!((Get-ItemProperty -Path "$RegRoot\Beater" -Name "Rootpath" -ErrorAction SilentlyContinue) -eq $BeaterHost.RootPath )) {
+        $Error.Clear()
+        New-ItemProperty -Path "$RegRoot\Beater" -Name "RootPath" -Value $BeaterHost.RootPath -PropertyType "String" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
+        If ($Error) {
+                Write-BTRLog "Can't create Beater registry" -Level Error
+                Return $false
+        }
+    }
     
+    #Test and create Instances Folder
+    If (!((Test-Path "$RegRoot\Beater\Instances" -ErrorAction SilentlyContinue))) {
+        $Error.Clear()
+        New-Item -Path "$RegRoot\Beater" -Name "Instances" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
+        If ($Error) {
+                Write-BTRLog "Can't create Instance key" -Level Error
+                Return $false
+        }
+    }
+
+    ForEach ($Instance in $BeaterHost.Instances ) {
+        #Create Key
+        If (!((Test-Path "$RegRoot\Beater\Instances\$($Instance.Name)" -ErrorAction SilentlyContinue))) {
+            $Error.Clear()
+            New-Item -Path "$RegRoot\Beater\Instances" -Name "$($Instance.Name)" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
+            If ($Error) {
+                    Write-BTRLog "Can't create Key for instance $($Instance.Name)" -Level Error
+                    Return $false
+            }
+        }
+    }
+
 }
 
 Function Wait-BTRVMOnline {
@@ -130,7 +174,7 @@ Function Install-BTRSofware {
             }Else{
                 $Error.Clear()
                 Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
-                    Invoke-WebRequest -Uri $ -OutFile $Using:VMFullPath -ErrorAction SilentlyContinue
+                    Invoke-WebRequest -Uri $WebLink -OutFile $Using:VMFullPath -ErrorAction SilentlyContinue
                 }
                 If ($Error) {
                     Read-Host "Can't download $Name"
@@ -790,7 +834,7 @@ Function Configure-BTRBaseImage {
     If (!($BaseImage.UseDHCP)) {
         Write-BTRLog "Base image is set to use static IP" -Level Debug
         Write-BTRLog "Checking if instance domain controller IP $($Instance.DomainControllerIP) is available" -Level Debug
-        If (!(Test-Connection -Targetname $Instance.DomainControllerIP -IPv4 -Quiet -Count 1 -ErrorAction SilentlyContinue)) {
+        If (!(Test-Connection -ComputerName $Instance.DomainControllerIP -Quiet -Count 1 -ErrorAction SilentlyContinue)) {
             Write-BTRLog "$($Instance.DomainControllerIP) is free.  Using that" -Level Debug
             $IP = $Instance.DomainControllerIP
         }Else{
@@ -847,7 +891,8 @@ Function Configure-BTRBaseImage {
 
         Write-BtrLog "configuring DNS" -Level Debug
         $Error.Clear()
-        Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock { 
+        Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+            $IfIndex = Get-NetAdapter -ErrorAction SilentlyContinue | WHERE MacAddress -eq $Using:MacAddress | Select -ExpandProperty ifIndex
             Set-DnsClientServerAddress -InterfaceIndex $IfIndex -ServerAddresses $Using:DNSServers
             Set-DnsClient -InterfaceIndex $IfIndex -RegisterThisConnectionsAddress $False
         }
@@ -1044,7 +1089,7 @@ Function Configure-BTRBaseImage {
 
     "Installing updates"
     Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
-        Install-WindowsUpdate -AcceptAll �AutoReboot
+        Install-WindowsUpdate -AcceptAll -AutoReboot
     }
 
 }
@@ -1149,7 +1194,7 @@ Function Install-BTRDomain {
 
     #Install Domain role
     Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
-        Install-WindowsFeature -Name AD-Domain-Services -IncludeAllSubFeature -IncludeManagementTools -Confirm:$False
+        Install-WindowsFeature -Name AD-Domain-Services -IncludeAllSubFeature -IncludeManagementTools -Confirm:$False -ErrorAction SilentlyContinue
     }
     If ($IsBroken) {
         "Unable to install Domain role"
@@ -1158,11 +1203,12 @@ Function Install-BTRDomain {
     }
 
     #Configure Domain
-    $DomainName = $Instance.DomainName
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
-        Install-ADDSForest -DomainMode 7 -ForestMode 7 -Force -DomainName $Using:Instance.DomainName -SafeModeAdministratorPassword $Using:SecurePassword -DomainNetbiosName $Using:Instance.NBDomainName
+    $Error.Clear()
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+        $SecurePassword = ConvertTo-SecureString -AsPlainText $Using:Instance.AdminPassword -Force
+        Install-ADDSForest -DomainMode 7 -ForestMode 7 -InstallDNS -Force -DomainName $Using:Instance.DomainName -SafeModeAdministratorPassword $SecurePassword -DomainNetbiosName $Using:Instance.NBDomainName -ErrorAction SilentlyContinue
     }
-    If ($IsBroken) {
+    If ($Error) {
         "Unable to create domain"
         Read-Host "Hit Enter to exit"
         Return
@@ -1740,32 +1786,33 @@ Function Install-BTRExchange {
         [String]$PrereqPath,
         [Int64]$StoreSizeGB = 100,
         [Int64]$LogSizeGB = 50
+
     )
 
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
     $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
 
-    #Make sure ISO exists
-    If (!(Test-Path $ExchangeISO)) {
-        Read-Host "Can't find $ExchangeISO!"
-        Return
-    }
-
-    #Make sure VM Exists and is on
-    If (!(Hyper-V\Get-VM -Name $VMName)) {
-        Read-Host "$VMName does not exist"
-        Return
-    }ElseIf(!(Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {dir c:\})) {
-        Read-Host "Unable to connect to $VMName"
-        Return
-    }
-
+    ##Make sure ISO exists
+    #If (!(Test-Path $ExchangeISO)) {
+    #    Read-Host "Can't find $ExchangeISO!"
+    #    Return
+    #}
+    #
+    ##Make sure VM Exists and is on
+    #If (!(Hyper-V\Get-VM -Name $VMName)) {
+    #    Read-Host "$VMName does not exist"
+    #    Return
+    #}ElseIf(!(Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {dir c:\})) {
+    #    Read-Host "Unable to connect to $VMName"
+    #    Return
+    #}
+    #
     ##Make sure there isn't already Exchange in the domain
     #If (Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {Get-AdGroup "Exchange Servers" -ErrorAction SilentlyContinue 2>&1 | Out-Null}) {
     #    Read-Host "Looks like you already have an exchange organiztion in $($Instance.Name)"
     #    Return
     #}
-
+    #
     #"Creating M: Drive"
     #$Path = "$($Instance.HDDPath)\$VMName-M.vhdx"
     #Hyper-V\New-VHD -Path $Path -SizeBytes 100GB -Dynamic
@@ -1784,15 +1831,15 @@ Function Install-BTRExchange {
     #    Format-Volume -DriveLetter L -FileSystem NTFS -NewFileSystemLabel "MailLog" -Confirm:$False -Force
     #}
 
-    #Install-BTRSofware -Name ".net 4.8" -Instance $Instance -VMName $VMName -WebLink https://go.microsoft.com/fwlink/?linkid=208863 -Installer "ndp48-x86-x64-allos-enu.exe" -Args "/q /norestart"
+    Install-BTRSofware -Name ".net 4.8" -Instance $Instance -VMName $VMName -WebLink "https://go.microsoft.com/fwlink/?linkid=208863" -Installer "ndp48-x86-x64-allos-enu.exe" -Args "/q /norestart"
 
-    #Install-BTRSofware -Name "Unified Communications Managed API 4.0 Runtime" -Instance $BeaterInstance -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" -Installer "UcmaRuntimeSetup.exe" -Args "/passive /norestart"
+    Install-BTRSofware -Name "Unified Communications Managed API 4.0 Runtime" -Instance $BeaterInstance -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" -Installer "UcmaRuntimeSetup.exe" -Args "/passive /norestart"
 
-    #Install-BTRSofware -Name "Visual C++ Redistributable Packages for Visual Studio 2013" -Instance $BeaterInstance -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/E/6/2E61CFA4-993B-4DD4-91DA-3737CD5CD6E3/vcredist_x64.exe" -Installer "vcredist_x64.exe" -Args "/passive /norestart"
+    Install-BTRSofware -Name "Visual C++ Redistributable Packages for Visual Studio 2013" -Instance $BeaterInstance -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/E/6/2E61CFA4-993B-4DD4-91DA-3737CD5CD6E3/vcredist_x64.exe" -Installer "vcredist_x64.exe" -Args "/passive /norestart"
 
 
-    #"Mounting EXchange ISO ($ExchangeISO)"
-    #Hyper-V\Add-VMDvdDrive -VMName $VMName -Path $ExchangeISO
+    "Mounting EXchange ISO ($ExchangeISO)"
+    Hyper-V\Add-VMDvdDrive -VMName $VMName -Path $ExchangeISO
     
         
 
