@@ -29,53 +29,46 @@ Function Read-BTRConfig  {
     
 }
 
-Function Write-BTRConfig  {
-    [Parameter(Mandatory=$True)]$BeaterHost
+Function Write-BTRToRegistry {
+    Param (
+        [Parameter(Mandatory=$True)][HashTable]$Item,
+        [Parameter(Mandatory=$True)][String]$Root
+    )
 
-    $RegRoot = "HKLM:\SOFTWARE\HobbyLobby\"
-
-    #Test and create root of config
-    If (!(Test-Path "$RegRoot\Beater" -ErrorAction SilentlyContinue)) {
-        $Error.Clear()
-        New-Item -Path $RegRoot -Name "Beater" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
-        If ($Error) {
-                Write-BTRLog "Can't create Beater registry" -Level Error
-                Return $false
-        }
+    #Test if root exists
+    If (!(Test-Path $Root -ErrorAction SilentlyContinue)) {
+        Write-BTRLog "$Root does not exist." -Level Error
+        Return $false
     }
 
-    #Test and create RootPath
-    If (!((Get-ItemProperty -Path "$RegRoot\Beater" -Name "Rootpath" -ErrorAction SilentlyContinue) -eq $BeaterHost.RootPath )) {
-        $Error.Clear()
-        New-ItemProperty -Path "$RegRoot\Beater" -Name "RootPath" -Value $BeaterHost.RootPath -PropertyType "String" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
-        If ($Error) {
-                Write-BTRLog "Can't create Beater registry" -Level Error
-                Return $false
-        }
-    }
-    
-    #Test and create Instances Folder
-    If (!((Test-Path "$RegRoot\Beater\Instances" -ErrorAction SilentlyContinue))) {
-        $Error.Clear()
-        New-Item -Path "$RegRoot\Beater" -Name "Instances" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
-        If ($Error) {
-                Write-BTRLog "Can't create Instance key" -Level Error
-                Return $false
-        }
-    }
-
-    ForEach ($Instance in $BeaterHost.Instances ) {
-        #Create Key
-        If (!((Test-Path "$RegRoot\Beater\Instances\$($Instance.Name)" -ErrorAction SilentlyContinue))) {
-            $Error.Clear()
-            New-Item -Path "$RegRoot\Beater\Instances" -Name "$($Instance.Name)" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
-            If ($Error) {
-                    Write-BTRLog "Can't create Key for instance $($Instance.Name)" -Level Error
+    ForEach ($SubItem In $Item.GetEnumerator()) {
+        If ($SubItem.Value.GetType().Name -eq 'String') {
+            #Add new propperty
+            #"Adding to $Root $($Item.Key) $($Item.Value)"
+            If (!((Get-ItemProperty -Path "$Root" -ErrorAction SilentlyContinue | Select -ExpandProperty $SubItem.Key -ErrorAction SilentlyContinue) -eq $SubItem.Value)) {
+                $Error.Clear()
+                New-ItemProperty -Path "$Root" -Name $SubItem.Key -Value $SubItem.Value -PropertyType "String" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
+                If ($Error) {
+                    Write-BTRLog "Can't add string value $Name to $Root. Error: $($Error[0].Exception.Message)." -Level Error
                     Return $false
+                }
             }
+        }ElseIf($SubItem.Value.GetType().Name -eq 'Hashtable') {
+            $NewRoot = "$Root\$($SubItem.Key)"
+            #Create Key
+            If (!(Test-Path "$NewRoot" -ErrorAction SilentlyContinue)) {
+                $Error.Clear()
+                New-Item -Path $Root -Name $SubItem.Key -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
+                If ($Error) {
+                    Write-BTRLog "Can't create $NewRoot. Error: $($Error[0].Exception.Message)." -Level Error
+                    Return $false
+                }
+            }
+            #Call Self for Hashtable
+            Write-BTRToRegistry -Item $SubItem.Value -Root $NewRoot
         }
+            
     }
-
 }
 
 Function Wait-BTRVMOnline {
