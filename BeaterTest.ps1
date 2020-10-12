@@ -73,12 +73,12 @@ Import-Module Hyper-V
 #    VMTempFolder = 'C:\Temp'
 #    SwitchName = "Beater"
 #    UseNAT = $True
-#    OscdimgPath = "C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe"
 #    TimeZone = "Central Standard Time"
 #}
 #
 #$BeaterHost = @{
 #    RootPath = "C:\WSUS"
+#    OscdimgPath = "C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe"
 #    Instances = @{
 #        'Beater' = $BeaterInstance
 #    }
@@ -105,7 +105,12 @@ Import-Module Hyper-V
 
 
 
-Read-BTRFromRegistry -Root 'HKLM:SOFTWARE\HobbyLobby\Beater'
+
+$BeaterConfig = Read-BTRFromRegistry -Root 'HKLM:SOFTWARE\HobbyLobby\Beater'
+
+Validate-BTRHostconfig -Config $BeaterConfig
+
+Validate-BTRHost -Config $BeaterConfig
 
 #Install-BTREnvironment -Instance $BeaterInstance
 #Install-BRTADK -BaseImage $2019BaseImage

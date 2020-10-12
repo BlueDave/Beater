@@ -24,9 +24,38 @@ Function Write-BTRLog {
     }
 }
 
-Function Read-BTRConfig  {
+Function Read-BTRFromRegistry {
+    Param (
+        [Parameter(Mandatory=$True)][String]$Root
+    )
 
+    #Test if root exists
+    If (!(Test-Path $Root -ErrorAction SilentlyContinue)) {
+        Write-BTRLog "$Root does not exist." -Level Error
+        Return $false
+    }
+
+    $TempHash = @{}
     
+    $Error.Clear()
+    $Key = [Microsoft.Win32.RegistryKey]::OpenBaseKey('localmachine','Registry64').OpenSubkey($Root.Replace("HKLM:",""))
+    If ($Error) {
+        Write-BTRLog -Level Error -Entry "Unable to open registry for reading"
+        Return $False
+    }
+
+    ForEach ($Name In $Key.GetValueNames()) {
+        If ($Key.GetValueKind($Name) -eq 'String') {
+            $TempHash.add($Name, $Key.GetValue($Name))
+        }
+    }
+
+    ForEach ($SubKeyName In $Key.GetSubKeyNames()) {
+        $TempHash.Add($SubKeyName, (Read-BTRFromRegistry -Root "$Root\$SubKeyName"))
+    }
+
+    Return $TempHash
+
 }
 
 Function Write-BTRToRegistry {
@@ -70,6 +99,51 @@ Function Write-BTRToRegistry {
             
     }
 }
+
+Function Validate-BTRHostconfig {
+    Param (
+        [Parameter(Mandatory=$True)]$Config
+    ) 
+
+    If (!($Config.RootPath)) {
+        Write-BTRLog -Level Debug -Entry "Root Path not defined"
+        Return $False
+    }
+
+    Return $True
+}
+
+Function Validate-BTRHost {
+    Param (
+        [Parameter(Mandatory=$True)][HashTable]$Config
+    )
+
+    #Make sure root path exists
+    If (!(Test-Path $Config.RootPath -ErrorAction SilentlyContinue)) {
+        Write-BTRLog -Level Debug -Entry "Root Path $($Config.RootPath) does not exits"
+        Return $False
+    }
+
+    #Make sure Hyper-V is installed
+    If (Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V* -ErrorAction SilentlyContinue | Where State -NE 'Enabled') {
+        Write-BTRLog "Hyper-V is not installed, or not all features are installed." -Level Debug
+        Return $False
+    }
+
+    #Make sure ADK is installed
+    If ($Config.OscdimgPath) {
+        If (!(Test-Path $Config.OscdimgPath)) {
+           Write-BTRLog "ADK is not installed" -Level Debug
+           Return $False
+        }
+    }Else{
+        Write-BTRLog "Path to Oscdimg.exe is not defined" -Level Debug
+        Return $False
+    }
+
+    Return $True
+}
+
 
 Function Wait-BTRVMOnline {
     Param (
@@ -202,6 +276,10 @@ Function Get-NextIP {
     $IP = $Octets -join "."
     Return $IP
 }
+
+
+
+
 
 Function Install-BTREnvironment {
     Param (
@@ -336,58 +414,6 @@ Function Delete-BTRInstance {
 
 }
 
-Function Install-BRTADK {
-    Param (
-        [Parameter(Mandatory=$True)]$Instance
-    )
-    $NeedInstall = $True
-
-    #Check if path is good and exit if it is
-    If ($Instance.OscdimgPath) {
-        Write-BTRLog "Checking $($Instance.OscdimgPath)." -Level Debug
-        If (Test-Path $Instance.OscdimgPath) {
-            Write-BTRLog "OSCDIMG already installed at the default location and path is set!" -Level Debug
-        }Else{
-            Write-BTRLog "OSCDIMG not installed" -Level Debug
-        }
-    }Else{
-        Write-BTRLog ""
-
-        Write-BTRLog "Checking for ADK installer in working folder" -Level Debug
-        $InstallFile = "$($BaseImage.WorkingPath)\adksetup.exe"
-        If (!(Test-Path $InstallFile)) {
-            #Get Windows Version
-            $WinVer = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").ReleaseId
-
-            "Getting ADK installer"
-            If ($Winver -eq 1903) {
-                Invoke-WebRequest -Uri https://go.microsoft.com/fwlink/?linkid=2086042 -OutFile $InstallFile -ErrorAction SilentlyContinue
-            } ElseIf ($WinVer -eq 1809) {
-                Invoke-WebRequest -Uri https://go.microsoft.com/fwlink/?linkid=2026036 -OutFile $InstallFile -ErrorAction SilentlyContinue
-            } ElseIf ($Winver -eq 1803) {
-                Invoke-WebRequest -Uri https://go.microsoft.com/fwlink/?linkid=873065 -OutFile $InstallFile -ErrorAction SilentlyContinue  
-            } ElseIf ($Winver -eq 1709) {
-                Invoke-WebRequest -Uri https://go.microsoft.com/fwlink/p/?linkid=859206 -OutFile $InstallFile -ErrorAction SilentlyContinue 
-            } Else{
-                "I don't know how to get an installer for Windows 10 $WinVer."
-                "Go download the correct vesion of adksetup.exe to $($BaseImage.WorkingPath)"
-                "Then run the script again"
-            }
-        }
-
-        If (Test-Path $InstallFile) {
-            "Installing adk"
-            Start-Process "$InstallFile" -ArgumentList "/quiet /features OptionId.DeploymentTools" -Wait -NoNewWindow
-        }Else{
-            "Unable to download ADK.  Good luck, you're on your own."
-        }
-
-        If (!(Test-Path $InstallFile)) {
-            "Failed to install ADK.   Good luck, you're on your own."
-        }
-    }
-
-}
 
 Function Create-BTRISO {
     Param (
