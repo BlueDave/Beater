@@ -113,6 +113,50 @@ Function Validate-BTRHostconfig {
     Return $True
 }
 
+Function Validate-BTRInstanceconfig {
+    Param (
+        [Parameter(Mandatory=$True)]$Instance
+    ) 
+
+    $ManditoryProperties = @(
+        "Host",
+        "Name",
+        "DomainName",
+        "NBDomainName",
+        "IPPrefix",
+        "Gateway",
+        "SubnetMask",
+        "SubnetLength",
+        "UseDHCP",
+        "DHCPStart",
+        "DHCPStop",
+        "AdminName",
+        "AdminNBName",
+        "AdminPassword",
+        "DomainController",
+        "DomainControllerIP",
+        "HDDPath",
+        "VMPath",
+        "SnapshotPath",
+        "WorkingFolder",
+        "CertFolder",
+        "AppFolder",
+        "VMTempFolder",
+        "SwitchName",
+        "UseNAT",
+        "TimeZone"
+    )
+
+    ForEach ($ManditoryProperty In $ManditoryProperties) {
+        If (!($Instance[$ManditoryProperty])) {
+            Write-BTRLog "$ManditoryProperty is not set" -Level Error
+            Return $False
+        }
+    }
+
+    Return $True
+}
+
 Function Validate-BTRHost {
     Param (
         [Parameter(Mandatory=$True)][HashTable]$Config
@@ -278,31 +322,121 @@ Function Get-NextIP {
 }
 
 
-
-
-
-Function Install-BTREnvironment {
-    Param (
-        [Parameter(Mandatory=$True)]$Instance
+Function Configure-BTRServer {
+     Param (
+        [Parameter(Mandatory=$True)]$Config
     )
-    Write-BTRLog "Entering Install-BTREnvironment" -Level Debug
-
     #Install Hyper-V if it's not enabled
     Write-BTRLog "Checking if Hyper-V is installed" -Level Debug
-    If ($(Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -ErrorAction:SilentlyContinue).State -ne 'Enabled' ) {
-        Write-BTRLog "Hyper-V is not installed.  Attempting to Install." -Level Debug
+    If (Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V* -ErrorAction SilentlyContinue | Where State -NE 'Enabled') {
+        Write-BTRLog "Hyper-V is not installed.  Attempting to Install." -Level Progress
         $Error.Clear()
         Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All -ErrorAction:SilentlyContinue
         If ($Error) {
             Write-BTRLog "Failed to installed Hyper-V. Error: $($Error[0].Exception.Message)" -Level Error
-            Return
+            Return $False
         }Else {
-            Write-BTRLog "Installed Hyper-V.  You must now reboot and run this script again to continue" -Level Error
-            Return
+            Write-BTRLog "Installed Hyper-V.  You must now reboot and run this script again to continue" -Level Progress
+            Return $False
         }
     }Else{
-        Write-BTRLog "Hyper-V is already installed" -Level Debug
+        Write-BTRLog "Hyper-V is already installed" -Level Progress
     }
+
+    #Make sure ADK is installed
+    If ($Config.OscdimgPath) {
+        Write-BTRLog -Entry "OscdimgPath is defined.  Making sure it exists" -Level Debug
+        If (Test-Path "C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe" -ErrorAction SilentlyContinue) {
+            Write-BTRLog -Entry "oscdimg.exe located." -Level Debug
+            $ADKInstalled = $True
+        }Else{
+            Write-BTRLog -Entry "OscdimgPath is set, but ADK does not appear to be installed there.  ADK will need to be installed." -Level Debug
+            $ADKInstalled = $False
+        }
+    }Else{
+        Write-BTRLog -Entry "OscdimgPath is not defined, checking for default ADK install." -Level Debug
+        If (Test-Path "C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe" -ErrorAction SilentlyContinue) {
+            Write-BTRLog -Entry "oscdimg.exe found at default location, setting path." -Level Debug
+            $Config.Add('OscdimgPath','C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe')
+            $ADKInstalled = $True
+        }Else{
+            Write-BTRLog -Entry "oscdimg.exe not found.  ADK will need to be installed." -Level Debug
+            $ADKInstalled = $False
+        }
+    }
+             
+    If (!($ADKInstalled)) {
+        Write-BTRLog "Determining the right version of ADK to download" -Level Debug
+        $InstallFile = "$($env:TEMP)\adksetup.exe"
+        $WinVer = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").ReleaseId
+        If ($Winver -eq 1903) {
+            $URL = "https://go.microsoft.com/fwlink/?linkid=2086042"
+        } ElseIf ($WinVer -eq 1809) {
+            $URL = " https://go.microsoft.com/fwlink/?linkid=2026036"
+        } ElseIf ($Winver -eq 1803) {
+            $URL = " https://go.microsoft.com/fwlink/?linkid=873065"
+        } ElseIf ($Winver -eq 1709) {
+            $URL = " https://go.microsoft.com/fwlink/p/?linkid=859206"
+        } Else{
+            Write-BTRLog "Unknown Windows Version $WinVer." -Level Error
+        }
+        Write-BTRLog "Getting ADK installer For Windows 10 $WinVer" -Level Debug
+        $Error.Clear()
+        Invoke-WebRequest -Uri https://go.microsoft.com/fwlink/?linkid=2086042 -OutFile $InstallFile -ErrorAction SilentlyContinue
+        If ($Error) {
+            Write-BTRLog "Failed to download ADK installer. Error: $($Error[0].Exception.Message)" -Level Error
+            Return $False
+        }
+
+        If (Test-Path $InstallFile) {
+            Write-BTRLog "Installing ADK from $InstallFile" -Level Progress
+            $Error.Clear()
+            Start-Process "$InstallFile" -ArgumentList "/quiet /features OptionId.DeploymentTools" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+            If ($Error){
+                Write-BTRLog "Failed to install ADK. Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
+            }Else{
+                 Write-BTRLog "Installed ADK." -Level Progress
+                 If (Test-Path "C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe" -ErrorAction SilentlyContinue) {
+                    Write-BTRLog -Entry "oscdimg.exe found at default location, setting path." -Level Debug
+                    $Config.Add('OscdimgPath','C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe')
+                }Else{
+                    Write-BTRLog "ADK setup finished, but oscdimg.exe was not found.  Good luck you're on your own!" -Level Error
+                    Return $False
+                }
+            }
+            Write-BTRLog "Cleaning up $InstallFile." -Level Debug
+            Remove-Item $InstallFile -Force -Confirm:$False -ErrorAction SilentlyContinue
+            $Error.Clear()
+
+        }Else{
+            Write-BTRLog  "Unable to download ADK.  Good luck, you're on your own." -Level Error
+            Return $False
+        }
+    }
+
+    #Verify Root Folder exists
+    If (!(Test-Path $($Config.RootPath))) {
+        Write-BTRLog "$($Config.RootPath) does not exist. Creating" -Level Debug
+        $Error.Clear()
+        New-Item $Config.RootPath -ItemType "Directory" -Confirm:$False -Force | Out-Null
+        If ($Error) {
+            Write-BTRLog "Unable to create $($Config.RootPath). Error: $($Error[0].Exception.Message)" -Level Error
+            Return $False
+        }
+    }Else{
+        Write-BTRLog "$($Config.RootPath) already exists" -Level Debug
+    }
+
+    Return $True
+}
+
+
+Function Configure-BTRInstance {
+    Param (
+        [Parameter(Mandatory=$True)]$Instance
+    )
+    Write-BTRLog "Entering Install-BTREnvironment" -Level Debug
 
     #Create folders if they don't exist
     If (!(Test-Path $($Instance.WorkingFolder))) {
