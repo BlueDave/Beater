@@ -189,6 +189,7 @@ Function Validate-BTRHost {
 }
 
 
+
 Function Wait-BTRVMOnline {
     Param (
         [Parameter(Mandatory=$True)][String]$VMName,

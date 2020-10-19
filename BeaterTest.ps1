@@ -103,14 +103,14 @@ Import-Module Hyper-V
 . "$(Split-Path -Parent -Path $MyInvocation.MyCommand.Definition)\BeaterFunction.ps1"
 
 
-
-
-
 $BeaterConfig = Read-BTRFromRegistry -Root 'HKLM:SOFTWARE\HobbyLobby\Beater'
 
-Validate-BTRHostconfig -Config $BeaterConfig
+#Validate-BTRHostconfig -Config $BeaterConfig
 
-Validate-BTRHost -Config $BeaterConfig
+#Validate-BTRHost -Config $BeaterConfig
+
+Set-BTRInstanceConfig -Config $BeaterConfig
+
 
 #Install-BTREnvironment -Instance $BeaterInstance
 #Install-BRTADK -BaseImage $2019BaseImage
