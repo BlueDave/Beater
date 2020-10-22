@@ -47,6 +47,9 @@ Function Read-BTRFromRegistry {
     ForEach ($Name In $Key.GetValueNames()) {
         If ($Key.GetValueKind($Name) -eq 'String') {
             $TempHash.add($Name, $Key.GetValue($Name))
+        }ElseIf($Key.GetValueKind($Name) -eq 'DWord') {
+            [Bool]$Temp = $Key.GetValue($Name)
+            $TempHash.add($Name, $Temp)
         }
     }
 
@@ -63,6 +66,7 @@ Function Write-BTRToRegistry {
         [Parameter(Mandatory=$True)][HashTable]$Item,
         [Parameter(Mandatory=$True)][String]$Root
     )
+    #Write-BTRLog "Entering Write-BTRToRegistry" -Level Debug
 
     #Test if root exists
     If (!(Test-Path $Root -ErrorAction SilentlyContinue)) {
@@ -70,19 +74,34 @@ Function Write-BTRToRegistry {
         Return $false
     }
 
-    ForEach ($SubItem In $Item.GetEnumerator()) {
-        If ($SubItem.Value.GetType().Name -eq 'String') {
+    ForEach ($SubItem In $Item.GetEnumerator() | Where Value ) {
+        If ($SubItem.Value.GetType().Name -in ('String','Int32')) {
             #Add new propperty
-            #"Adding to $Root $($Item.Key) $($Item.Value)"
             If (!((Get-ItemProperty -Path "$Root" -ErrorAction SilentlyContinue | Select -ExpandProperty $SubItem.Key -ErrorAction SilentlyContinue) -eq $SubItem.Value)) {
                 $Error.Clear()
+                #Write-BTRLog "Adding to $Root $($Item.Key) = $($SubItem.Value)" -Level Debug
                 New-ItemProperty -Path "$Root" -Name $SubItem.Key -Value $SubItem.Value -PropertyType "String" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
                 If ($Error) {
                     Write-BTRLog "Can't add string value $Name to $Root. Error: $($Error[0].Exception.Message)." -Level Error
                     Return $false
+                }Else{
+                    Write-BTRLog "Added to $Root $($Item.Key) = $($SubItem.Value)" -Level Debug
                 }
             }
-        }ElseIf($SubItem.Value.GetType().Name -eq 'Hashtable') {
+        } ElseIf ($SubItem.Value.GetType().Name -eq 'Boolean') {
+            #Add new propperty
+            If (!((Get-ItemProperty -Path "$Root" -ErrorAction SilentlyContinue | Select -ExpandProperty $SubItem.Key -ErrorAction SilentlyContinue) -eq $SubItem.Value)) {
+                $Error.Clear()
+                #Write-BTRLog "Adding to $Root $($Item.Key) = $($SubItem.Value)" -Level Debug
+                New-ItemProperty -Path "$Root" -Name $SubItem.Key -Value $SubItem.Value -PropertyType "DWORD" -Force -Confirm:$false -ErrorAction SilentlyContinue *>&1 | Out-Null
+                If ($Error) {
+                    Write-BTRLog "Can't add string value $Name to $Root. Error: $($Error[0].Exception.Message)." -Level Error
+                    Return $false
+                }Else{
+                    #Write-BTRLog "Added to $Root $($Item.Key) = $($SubItem.Value)" -Level Debug
+                }
+            }
+        } ElseIf($SubItem.Value.GetType().Name -eq 'Hashtable') {
             $NewRoot = "$Root\$($SubItem.Key)"
             #Create Key
             If (!(Test-Path "$NewRoot" -ErrorAction SilentlyContinue)) {
@@ -91,13 +110,17 @@ Function Write-BTRToRegistry {
                 If ($Error) {
                     Write-BTRLog "Can't create $NewRoot. Error: $($Error[0].Exception.Message)." -Level Error
                     Return $false
+                }Else{
+                    #Write-BTRConfig "Created $($SubItem.Key)" -level Debug
                 }
             }
             #Call Self for Hashtable
             Write-BTRToRegistry -Item $SubItem.Value -Root $NewRoot
-        }
-            
+        }    
     }
+
+        #Write-BTRLog "Exiting Write-BTRToRegistry" -Level Debug
+        Return $True
 }
 
 Function Validate-BTRHostconfig {
@@ -429,6 +452,45 @@ Function Configure-BTRServer {
         Write-BTRLog "$($Config.RootPath) already exists" -Level Debug
     }
 
+    #Verify App Folder exists
+    If (!(Test-Path $($Config.AppFolder))) {
+        Write-BTRLog "$($Config.AppFolder) does not exist. Creating" -Level Debug
+        $Error.Clear()
+        New-Item $Config.AppFolder -ItemType "Directory" -Confirm:$False -Force | Out-Null
+        If ($Error) {
+            Write-BTRLog "Unable to create $($Config.AppFolder). Error: $($Error[0].Exception.Message)" -Level Error
+            Return $False
+        }
+    }Else{
+        Write-BTRLog "$($Config.AppFolder) already exists" -Level Debug
+    }
+
+    #Verify Certificate Folder exists
+    If (!(Test-Path $($Config.CertFolder))) {
+        Write-BTRLog "$($Config.CertFolder) does not exist. Creating" -Level Debug
+        $Error.Clear()
+        New-Item $Config.CertFolder -ItemType "Directory" -Confirm:$False -Force | Out-Null
+        If ($Error) {
+            Write-BTRLog "Unable to create $($Config.CertFolder). Error: $($Error[0].Exception.Message)" -Level Error
+            Return $False
+        }
+    }Else{
+        Write-BTRLog "$($Config.CertFolder) already exists" -Level Debug
+    }
+
+    #Verify Base Image Folder exists
+    If (!(Test-Path $($Config.BaseImagePath))) {
+        Write-BTRLog "$($Config.BaseImagePath) does not exist. Creating" -Level Debug
+        $Error.Clear()
+        New-Item $Config.BaseImagePath -ItemType "Directory" -Confirm:$False -Force | Out-Null
+        If ($Error) {
+            Write-BTRLog "Unable to create $($Config.BaseImagePath). Error: $($Error[0].Exception.Message)" -Level Error
+            Return $False
+        }
+    }Else{
+        Write-BTRLog "$($Config.BaseImagePath) already exists" -Level Debug
+    }
+
     Return $True
 }
 
@@ -437,16 +499,16 @@ Function Configure-BTRInstance {
     Param (
         [Parameter(Mandatory=$True)]$Instance
     )
-    Write-BTRLog "Entering Install-BTREnvironment" -Level Debug
+    Write-BTRLog "Entering Install-BTRInstance" -Level Debug
 
     #Create folders if they don't exist
-    If (!(Test-Path $($Instance.WorkingFolder))) {
-        Write-BTRLog "$($Instance.WorkingFolder) does not exist. Creating" -Level Debug
-        New-Item $($Instance.WorkingFolder) -ItemType "Directory" -Confirm:$False -Force | Out-Null
+    If (!(Test-Path $($Instance.AppFolder))) {
+        Write-BTRLog "$($Instance.AppFolder) does not exist. Creating" -Level Debug
+        New-Item $($Instance.AppFolder) -ItemType "Directory" -Confirm:$False -Force | Out-Null
     }
-    If (!(Test-Path $($Instance.VMPath))) {
-        Write-BTRLog "$($Instance.VMPath) does not exist. Creating" -Level Debug
-        New-Item $($Instance.VMPath) -ItemType "Directory" -Confirm:$False -Force | Out-Null
+    If (!(Test-Path $($Instance.CertFolder))) {
+        Write-BTRLog "$($Instance.CertFolder) does not exist. Creating" -Level Debug
+        New-Item $($Instance.CertFolder) -ItemType "Directory" -Confirm:$False -Force | Out-Null
     }
     If (!(Test-Path $($Instance.HDDPath))) {
         Write-BTRLog "$($Instance.HDDPath) does not exist. Creating" -Level Debug
@@ -456,6 +518,14 @@ Function Configure-BTRInstance {
         Write-BTRLog "$($Instance.SnapshotPath) does not exist. Creating" -Level Debug
         New-Item $Instance.SnapshotPath -ItemType "Directory" -Confirm:$False -Force | Out-Null
     }
+    If (!(Test-Path $($Instance.VMPath))) {
+        Write-BTRLog "$($Instance.VMPath) does not exist. Creating" -Level Debug
+        New-Item $($Instance.VMPath) -ItemType "Directory" -Confirm:$False -Force | Out-Null
+    }
+    If (!(Test-Path $($Instance.WorkingFolder))) {
+        Write-BTRLog "$($Instance.WorkingFolder) does not exist. Creating" -Level Debug
+        New-Item $($Instance.WorkingFolder) -ItemType "Directory" -Confirm:$False -Force | Out-Null
+    }
 
     #Create Network Switch
     Write-BTRLog "Checking if vSwitch $($Instance.SwitchName) exists." -Level Debug
@@ -464,20 +534,20 @@ Function Configure-BTRInstance {
         If ($Instance.UseNAT) {
             Write-BTRLog "Instance $($Instance.Name) is set to use NAT. Creating $($Instance.SwitchName) as an Internal Switch." -Level Progress
             $Error.Clear()
-            Hyper-V\New-VMSwitch -SwitchName $Instance.SwitchName -SwitchType Internal -ComputerName $Instance.Host
+            Hyper-V\New-VMSwitch -SwitchName $Instance.SwitchName -SwitchType Internal
             If ($Error) {
                 Write-BTRLog "Can't create new switch. Error: $($Error[0].Exception.Message)" -Level Error
-                Return
+                Return $False
             }Else{
                 Write-BTRLog "Created vSwitch $($Instance.SwitchName) as Internal" -Level Debug
             }
         }Else{
             Write-BTRLog "Instance $($Instance.Name) is NOT set to use NAT. Creating $($Instance.SwitchName) as a Private Switch." -Level Progress
             $Error.Clear()
-            Hyper-V\New-VMSwitch -SwitchName $Instance.SwitchName -SwitchType Private -ComputerName $Instance.Host
+            Hyper-V\New-VMSwitch -SwitchName $Instance.SwitchName -SwitchType Private
             If ($Error) {
                 Write-BTRLog "Can't create new switch. Error: $($Error[0].Exception.Message)" -Level Error
-                Return
+                Return $False
             }Else{
                 Write-BTRLog "Created vSwitch $($Instance.SwitchName) as Private" -Level Debug
             }
@@ -494,17 +564,18 @@ Function Configure-BTRInstance {
             Write-BTRLog "Looking for host NIC attached to $($Instance.SwitchName)" -Level Debug
             If (!($Index = Get-NetAdapter | Where name -Like "*$($Instance.SwitchName)*" | Select -ExpandProperty ifIndex)) {
                 Write-BTRLog "Can't find instance switch. Error: $($Error[0].Exception.Message)" -Level Error
-                Return
+                Return $False
             }Else{
                 Write-BTRLog "Host NIC attached to $($Instance.SwitchName) is Index $Index." -Level Debug
             }
             $Error.Clear
             Write-BTRLog "Assigning $($Instance.Gateway) to host NIC with Index $Index." -Level Progress
             New-NetIPAddress -IPAddress $Instance.Gateway -PrefixLength $Instance.SubnetLength -InterfaceIndex $Index
-            Write-BTRLog "Verifying $($Instance.Gateway) is assigned to host NIC with Index $Index." -Level Degug
+            Write-BTRLog "Verifying $($Instance.Gateway) is assigned to host NIC with Index $Index." -Level Debug
             $Error.Clear()
             If ((!(Get-NetAdapter -ErrorAction SilentlyContinue | Where name -Like "*$($Instance.SwitchName)*" | Select -ExpandProperty ifIndex))) {
                 Write-BTRLog "Can't set IP on instance switch. Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
             }Else{
                 Write-BTRLog "Verified Host NIC with Index $Index is assinged IP $($Instance.Gateway)" -Level Debug
             }
@@ -512,23 +583,33 @@ Function Configure-BTRInstance {
             Write-BTRLog "Host already has IP set for NIC attached to vSwitch $($Instance.SwitchName)." -Level Debug
         }
 
+        #Wait 5 seconds for switch configuration to complete
+        Start-Sleep -Seconds 5
+
         #Setting network to private
         Write-BTRLog "Checking if network is set to Private" -Level Debug
-        If ($(Get-NetConnectionProfile | Where InterfaceAlias -Like "*Beater*" | select -ExpandProperty NetworkCategory) -ne 'Private' ) {
-            Write-BTRLog "Setting network to Private" -Level Progress
+        If ($(Get-NetConnectionProfile | Where InterfaceAlias -Like "*$($Instance.SwitchName)*" | select -ExpandProperty NetworkCategory) -ne 'Private' ) {
+            $Error.Clear()
             Get-NetConnectionProfile | Where InterfaceAlias -Like "*$($Instance.SwitchName)*" | Set-NetConnectionProfile -NetworkCategory Private
+            If ($Error) {
+                Write-BTRLog "Unable to set network to private. Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
+            }Else{
+                Write-BTRLog "Set network to Private" -Level Progress
+            }
         }Else{
-            Write-BTRLog "Network is already set to progress" -Level Debug
+            Write-BTRLog "Network is already set to Private" -Level Debug
         }
 
         #Create NAT
-        Write-BTRLog "Checking if a NAT exists for $($Instance.Name)" -Level Debug
-        If (!(Get-NetNat | Where InternalIPInterfaceAddressPrefix -eq "$($Instance.IPPrefix).0/$($Instance.SubnetLength)")) {
+        Write-BTRLog "Checking if a NAT exists for $($Instance.Name)." -Level Debug
+        If (!(Get-NetNat | Where Name -eq "$($Instance.SwitchName)NAT")) {
             Write-BTRLog "NAT does not exist for $($Instance.Name). Creating" -Level Debug
             $Error.Clear()
             New-NetNat -Name "$($Instance.SwitchName)NAT" -InternalIPInterfaceAddressPrefix "$($Instance.IPPrefix).0/$($Instance.SubnetLength)"
             If ($Error) {
                 Write-BTRLog "Can't create NAT. Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
             }
         }Else{
             Write-BTRLog "NAT already exists." -Level Debug
@@ -537,7 +618,9 @@ Function Configure-BTRInstance {
     }Else{
         Write-BTRLog "Instance $($Instance.Name) is not set to use NAT.  Skipping host IP check." -Level Debug
     }
-    Write-BTRLog "Exiting Install-BTREnvironment" -Level Debug
+    Write-BTRLog "Exiting Configure-BTRInstance" -Level Debug
+
+    Return $True
 }
 
 Function Delete-BTRInstance {
@@ -843,11 +926,11 @@ Function Create-BTRISO {
    }
 
     Write-BTRLog "Writing out $($BaseImage.CustomISO).  This will take a while!" -Level Progress
-    Write-BTRLog "Running from $($Instance.OscdimgPath)." -level Debug
+    Write-BTRLog "Running from $($BaseImage.OscdimgPath)." -level Debug
     $Args = "-m -o -u2 -udfver102 -bootdata:2#p0,e,b`"$ExtractFolder\boot\etfsboot.com`"#pEF,e,b`"$ExtractFolder\efi\microsoft\boot\efisys.bin`" `"$ExtractFolder`" $($BaseImage.CustomISO)"
         Write-BTRLog "With Arguments $Args" -level Debug
     $Error.Clear()
-    Start-Process -FilePath $Instance.OscdimgPath -ArgumentList $Args  -Wait -WindowStyle Normal -ErrorAction SilentlyContinue
+    Start-Process -FilePath $BaseImage.OscdimgPath -ArgumentList $Args  -Wait -WindowStyle Normal -ErrorAction SilentlyContinue
     If ($LASTEXITCODE -or $Error) {
         Write-BTRLog "Failed to create $($BaseImage.CustomISO).  Error Code $LASTEXITCODE." -Level Error
         Return
@@ -865,6 +948,7 @@ Function Create-BTRISO {
     }
 
     Write-BTRLog "Exiting Create-BTRISO." -Level Debug
+    Return $True
 }
 
 Function Create-BTRBaseVM {
@@ -881,7 +965,7 @@ Function Create-BTRBaseVM {
     Write-BTRLog "Checking if $VMName exists" -Level Debug
     If (Hyper-V\Get-VM -ErrorAction SilentlyContinue | Where Name -EQ $VMName) {
         Write-BTRLog "$VMName already exists" -Level Error
-        Return
+        Return $False
     }Else{
         Write-BTRLog "$VMName does not exist" -Level Debug
     }
@@ -891,7 +975,7 @@ Function Create-BTRBaseVM {
     $VM = Hyper-V\New-VM -Name $VMName -MemoryStartupBytes 1024MB -Generation 2 -Path $Instance.VMPath -ErrorAction SilentlyContinue 
     If ($Error) {
         Write-BTRLog "Unable to Create $VMName. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     } Else {
         Write-BTRLog "Created $VMName." -Level Progress
     }
@@ -901,7 +985,7 @@ Function Create-BTRBaseVM {
     Hyper-V\Set-VM -Name $VMName -ProcessorCount 3 -AutomaticCheckpointsEnabled:$False -Confirm:$False -CheckpointType Production -ErrorAction SilentlyContinue
     If ($Error) {
         Write-BTRLog "Unable to configure $VMName. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     } Else {
         Write-BTRLog "Configured $VMName." -Level Debug
     }
@@ -911,7 +995,7 @@ Function Create-BTRBaseVM {
     Hyper-V\Connect-VMNetworkAdapter -VMName $VMName -SwitchName $Instance.SwitchName -ErrorAction SilentlyContinue
     If ($Error) {
         Write-BTRLog "Unable to connect $VMName to vSwitch $($Instance.SwitchName). Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     } Else {
         Write-BTRLog "Connected $VMName to vSwitch $($Instance.SwitchName)" -Level Debug
     }
@@ -921,7 +1005,7 @@ Function Create-BTRBaseVM {
     Hyper-V\Enable-VMIntegrationService -VMName $VMName -Name "Guest Service Interface" -ErrorAction SilentlyContinue
     If ($Error) {
         Write-BTRLog "Unable to configure Integration Services on $VMName. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     } Else {
         Write-BTRLog "Configured Integration Services on $VMName" -Level Debug
     }
@@ -931,7 +1015,7 @@ Function Create-BTRBaseVM {
     Hyper-V\New-VHD -Path $BaseImage.BaseImage -Dynamic -SizeBytes 40GB -ErrorAction SilentlyContinue *>&1 | Out-Null
     If ($Error) {
         Write-BTRLog "Unable to create HDD $($BaseImage.BaseImage). Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     } Else {
         Write-BTRLog "Created HDD $($BaseImage.BaseImage)." -Level Debug
     }
@@ -941,7 +1025,7 @@ Function Create-BTRBaseVM {
     Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $BaseImage.BaseImage -ErrorAction SilentlyContinue
     If ($Error) {
         Write-BTRLog "Unable to attach HDD $($BaseImage.BaseImage) to $VMName. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     } Else {
         Write-BTRLog "Attached HDD $($BaseImage.BaseImage) to $VMName." -Level Debug
     }
@@ -951,7 +1035,7 @@ Function Create-BTRBaseVM {
     Hyper-V\Add-VMDvdDrive -VMName $VMName -Path $BaseImage.CustomISO -ErrorAction SilentlyContinue
     If ($Error) {
         Write-BTRLog "Unable to attach DVD $($BaseImage.CustomISO) to $VMName. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     } Else {
         Write-BTRLog "Attached DVD $($BaseImage.CustomISO) to $VMName." -Level Debug
     }
@@ -963,10 +1047,12 @@ Function Create-BTRBaseVM {
     Hyper-V\Set-VMFirmware -VMName $VMName -EnableSecureBoot Off -BootOrder $DVDDrive, $BootHDD -ErrorAction SilentlyContinue
     If ($Error) {
         Write-BTRLog "Unable to attach DVD $($BaseImage.CustomISO) to $VMName. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     } Else {
         Write-BTRLog "Attached DVD $($BaseImage.CustomISO) to $VMName." -Level Debug
     }
+
+    Return $True
 }
 
 Function Configure-BTRBaseImage {
@@ -977,11 +1063,15 @@ Function Configure-BTRBaseImage {
 
     Write-BTRLog "Entering configure-BTRBaseImage" -Level Debug
 
+    #Figure Creditials
+    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential("$($Instance.Name)\$($Instance.AdminName)", $SecurePassword)
+
     $VMName = $BaseImage.Name
     Write-BTRLog "Making sure $VMName exists" -Level Debug
     If (!(Hyper-V\Get-VM | Where Name -EQ $VMName)) {
         Write-BTRLog "$VMName does not exist" -Level Error
-        Return
+        Return $False
     }
 
     Write-BTRLog "Checking if base image is set to use static IP" -Level Debug
@@ -1008,11 +1098,11 @@ Function Configure-BTRBaseImage {
         $DNSServers = Get-DnsClientServerAddress -ErrorAction SilentlyContinue | Where AddressFamily -eq 2 | Where ServerAddresses | Select -ExpandProperty ServerAddresses
         If ($Error) {
             Write-BTRLog "Unable to retreive host DNS servers. Error: $($Error[0].Exception.Message)" -Level Error
-            Return
+            Return $False
         }Else{
             If (!($DNSServers)) {
                 Write-BTRLog "Unable to retreive host DNS servers" -Level Error
-                Return
+                Return $False
             }Else{
                 Write-BTRLog "Host is using DNS Servers" -Level Debug
                 ForEach ($DNSServer In $DNSServers) {
@@ -1025,34 +1115,34 @@ Function Configure-BTRBaseImage {
         $MacAddress = $(Hyper-V\Get-VMNetworkAdapter -VMName $VMName -ErrorAction SilentlyContinue | Select -ExpandProperty MACAddress) -replace "([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])", '$1$2-$3$4-$5$6-$7$8-$9$10-$11$12'
         If ($MacAddress.Length -ne 17) {
             Write-BTRLog "Unable to get Mac address" -Level Error
-            Return
+            Return $False
         }Else{
             Write-BTRLog "VM $VMName has MAC address $MacAddress" -Level Debug
         }
 
         Write-BtrLog "Setting IP to $IP" -Level Debug
         $Error.Clear()
-        Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock { 
+        Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock { 
             $IfIndex = Get-NetAdapter -ErrorAction SilentlyContinue | WHERE MacAddress -eq $Using:MacAddress | Select -ExpandProperty ifIndex
             New-NetIPAddress -InterfaceIndex $IfIndex -AddressFamily IPv4 -IPAddress $Using:IP -PrefixLength $Using:Instance.SubnetLength -DefaultGateway $Using:Instance.Gateway
         }
         If($Error) {
             Write-BTRLog "Failed to set static IP to $IP. Error: $($Error[0].Exception.Message)" -Level Error
-            Return
+            Return $False
         }Else{
             Write-BTRLog "Set static IP to $IP." -Level Debug
         }
 
         Write-BtrLog "configuring DNS" -Level Debug
         $Error.Clear()
-        Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+        Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
             $IfIndex = Get-NetAdapter -ErrorAction SilentlyContinue | WHERE MacAddress -eq $Using:MacAddress | Select -ExpandProperty ifIndex
             Set-DnsClientServerAddress -InterfaceIndex $IfIndex -ServerAddresses $Using:DNSServers
             Set-DnsClient -InterfaceIndex $IfIndex -RegisterThisConnectionsAddress $False
         }
         If($Error) {
             Write-BTRLog "Failed to configure DNS. Error: $($Error[0].Exception.Message)" -Level Error
-            Return
+            Return $False
         }Else{
             Write-BTRLog "Configured DNS" -Level Debug
         }
@@ -1062,7 +1152,7 @@ Function Configure-BTRBaseImage {
 
     Write-BtrLog "Disabling IPv6" -Level Debug
     $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock { 
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock { 
         Get-NetAdapter -ErrorAction SilentlyContinue | foreach { Disable-NetAdapterBinding -InterfaceAlias $_.Name -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue }
     }
     If($Error) {
@@ -1073,7 +1163,7 @@ Function Configure-BTRBaseImage {
 
     Write-BTRLog "Disabling IE Enhanced Security" -Level Debug
     $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         $AdminKey = "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A7-37EF-4b3f-8CFC-4F3A74704073}"
         $UserKey = "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A8-37EF-4b3f-8CFC-4F3A74704073}"
         Set-ItemProperty -Path $AdminKey -Name "IsInstalled" -Value 0 -ErrorAction SilentlyContinue
@@ -1081,40 +1171,40 @@ Function Configure-BTRBaseImage {
     }
     If($Error) {
         Write-BTRLog "Failed to disable IE Enhanced Security. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     }Else{
         Write-BTRLog "Disabled IE Enhanced Security" -Level Progress
     }
 
     Write-BTRLog "Enabling RDP"
     $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0 *>&1 | Out-Null
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         (Get-WmiObject -class Win32_TSGeneralSetting -Namespace root\cimv2\terminalservices -Filter "TerminalName='RDP-tcp'").SetUserAuthenticationRequired(1) *>&1 | Out-Null
     }
     If($Error) {
         Write-BTRLog "Failed to enable RDP. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     }Else{
         Write-BTRLog "Enabled RDP" -Level Progress
     }
 
     Write-BTRLog "Setting Time Zone" -Level Debug
     $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Set-TimeZone -Id $Using:Instance.TimeZone
     }
     If($Error) {
         Write-BTRLog "Failed to set Time Zone. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     }Else{
         Write-BTRLog "Set Time Zone" -Level Progress
     }
 
     Write-BTRLog "Installing Optional Components" -Level Debug
     $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         If ($(Get-WmiObject Win32_OperatingSystem).ProductType -ne 1) {
             Install-WindowsFeature -IncludeAllSubFeature RSAT -ErrorAction SilentlyContinue *>&1 | Out-Null
             Install-WindowsFeature -IncludeAllSubFeature GPMC -ErrorAction SilentlyContinue *>&1 | Out-Null
@@ -1125,13 +1215,13 @@ Function Configure-BTRBaseImage {
     }
     If($Error) {
         Write-BTRLog "Failed to install Optional Components. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     }Else{
         Write-BTRLog "Installed Optional Components." -Level Progress
     }
     
     Write-BTRLog "Creating $($Instance.VMTempFolder)" -Level Debug
-    Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         If (!(Test-Path $Using:Instance.VMTempFolder)) {
             New-Item $Using:Instance.VMTempFolder -ItemType Directory -Force -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
         }
@@ -1147,11 +1237,11 @@ Function Configure-BTRBaseImage {
             $Cert.Import($Certificate.FullName)
             Copy-VMFile $VMName -SourcePath $Certificate.FullName -DestinationPath $DestinationPath -CreateFullPath -FileSource Host -Force
             If ($Cert.Issuer -eq $Cert.GetName()) {
-                Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+                Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
                     Import-Certificate -Filepath $Using:DestinationPath -CertStoreLocation "Cert:\LocalMachine\Root" *>&1 | Out-Null
                 }
             }Else{
-                Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+                Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
                     Import-Certificate -Filepath $Using:DestinationPath -CertStoreLocation "Cert:\LocalMachine\CA" *>&1 | Out-Null
                 }
             }
@@ -1161,10 +1251,10 @@ Function Configure-BTRBaseImage {
     #Install Apps
     "Copying apps over"
     ForEach ($File In Get-ChildItem $Instance.AppFolder) {
-        Hyper-V\Copy-VMFile -Name $VMName -SourcePath $File.FullName -DestinationPath "C:\Temp\$($File.Name)" -CreateFullPath -FileSource Host -Force #-Credential $Instance.LocalCreds
+        Hyper-V\Copy-VMFile -Name $VMName -SourcePath $File.FullName -DestinationPath "C:\Temp\$($File.Name)" -CreateFullPath -FileSource Host -Force
     }
     
-    Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         "Installing Chrome"
         If (Test-Path "C:\Temp\GoogleChromeStandaloneEnterprise64.msi") {
             Start-Process Msiexec.exe -ArgumentList '/i "C:\Temp\GoogleChromeStandaloneEnterprise64.msi" /qb!' -Wait
@@ -1218,7 +1308,7 @@ Function Configure-BTRBaseImage {
     
     If ($BaseImage.UseWSUS) {
         "Configuring Updates"
-        Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+        Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
             REG ADD HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate /v TargetGroup /d SVDI /t REG_SZ /f *>&1 | Out-Null
             REG ADD HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate /v TargetGroupEnabled /d 1 /t REG_DWORD /f *>&1 | Out-Null
             Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate" -Name WUServer -Value $Using:BaseImage.UpdateSource -Force -Confirm:$False *>&1 | Out-Null
@@ -1228,7 +1318,7 @@ Function Configure-BTRBaseImage {
     }
 
     "Installing Windows Update Module"
-    Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Set-ExecutionPolicy Unrestricted -Force -Confirm:$False *>&1 | Out-Null
         Install-PackageProvider -Name NuGet -ErrorAction SilentlyContinue *>&1 | Out-Null
         Register-PSRepository -Default -InstallationPolicy Trusted -ErrorAction SilentlyContinue *>&1 | Out-Null
@@ -1237,12 +1327,12 @@ Function Configure-BTRBaseImage {
     }
 
     "Checking for updates"
-    Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Get-WindowsUpdate
     }
 
     "Installing updates"
-    Invoke-Command -VMName $VMName -Credential $Instance.LocalCreds -ScriptBlock {
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Install-WindowsUpdate -AcceptAll -AutoReboot
     }
 

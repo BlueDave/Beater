@@ -5,61 +5,76 @@ $RegRoot = 'HKLM:SOFTWARE\HobbyLobby\Beater'
 $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
 $LogLevel = 'Debug'
 $ConsoleLevel = 'Debug'
+$LogFile = "C:\WSUS\BeaterCommandLine.log"
 
-Function Set-BTRServerConfig {
-     Param (
-        [Parameter(Mandatory=$True)]$Config
-    )
+. .\BeaterFunction.ps1
+
+
+Function Get-BTRServerConfig {
+    $NewConfig = @{}
 
     #Set Root Path
-    If ($Config.RootPath) {
-        $Default = $Config.Rootpath
-    }Else{
-        $Default = 'C:\Beater'
-    }
-    $RootPath = Read-Host "Root Path for Beater? [$Default]:"
-    If ($RootPath) {       
-        $Config.RootPath = $Rootpath
-    }Else{
-        $Config.RootPath = $Default
-    }
+    $Default = "C:\Beater"
+    Do {
+        $New = Read-Host "Root Path? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
+    $NewConfig.Rootpath = $New
+
+    #Set Base Image Folder
+    $Default = "$($NewConfig.Rootpath)\BaseImages"
+    Do {
+        $New = Read-Host "Path to Base Image Folder? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
+    $NewConfig.BaseImagePath = $New
+
+    #Set App Folder
+    $Default = "$($NewConfig.Rootpath)\Apps"
+    Do {
+        $New = Read-Host "Path to App Folder? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
+    $NewConfig.AppFolder = $New
+
+    #Set Certificate Path
+    $Default = "$($NewConfig.Rootpath)\Certificates"
+    Do {
+        $New = Read-Host "Path to certificate folder? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
+    $NewConfig.CertFolder = $New
+
+    #Set Working Folder
+    $Default = "$($NewConfig.Rootpath)\Working"
+    Do {
+        $New = Read-Host "Path to working folder? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
+    $NewConfig.WorkingFolder = $New
+
+    Return $NewConfig
 }
 
-Function Set-BTRInstanceConfig {
+Function Get-BTRInstanceConfig {
      Param (
-        [Parameter(Mandatory=$True)]$Config,
-        [HashTable]$Instance
-    )
-
-    #Set Name
-    If ($Instance.Name) {
-        $Default = $Instance.Name
-    }Else{
-        $Default = 'Beater'
-    }
-    $Name = Read-Host "Instance Name? [$Default]:"
-    If ($Name) {       
-        $Instance.Name = $Name
-    }Else{
-        $Instance.Name = $Default
-    }
-
-}
-
-Function Set-BTRInstanceConfig {
-     Param (
-        [Parameter(Mandatory=$True)]$Config,
-        [HashTable]$OldInstance
+        [Parameter(Mandatory=$True)]$Config
     )
 
     $NewInstance = @{}
 
     #Set Name
-    If ($OldInstance.Name) {
-        $Default = $OldInstance.Name
-    }Else{
-        $Default = "Beater"
-    }
+    $Default = "Beater"
     Do {
         $New = Read-Host "Instance Name? [$Default]"
         If (!($New)) {
@@ -69,11 +84,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.Name = $New
 
     #Set AppFolder
-    If ($OldInstance.AppFolder) {
-        $Default = $OldInstance.AppFolder
-    }Else{
-        $Default = "$($Config.RootPath)\Apps"
-    }
+    $Default = $Config.AppFolder
     Do {
         $New = Read-Host "Path to application install files? [$Default]"
         If (!($New)) {
@@ -83,11 +94,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.AppFolder = $New
 
     #Set Certificate Folder
-    If ($OldInstance.CertFolder) {
-        $Default = $OldInstance.CertFolder
-    }Else{
-        $Default = "$($Config.RootPath)\Certificates"
-    }
+    $Default = $Config.CertFolder
     Do {
         $New = Read-Host "Path to certificate folder? [$Default]"
         If (!($New)) {
@@ -97,11 +104,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.CertFolder = $New
 
     #Set Working Folder
-    If ($OldInstance.WorkingFolder) {
-        $Default = $OldInstance.WorkingFolder
-    }Else{
-        $Default = "$($Config.RootPath)\Working"
-    }
+    $Default = $Config.WorkingFolder
     Do {
         $New = Read-Host "Path to working folder? [$Default]"
         If (!($New)) {
@@ -111,11 +114,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.WorkingFolder = $New
 
     #Set VM Folder
-    If ($OldInstance.VMPath) {
-        $Default = $OldInstance.VMPath
-    }Else{
-        $Default = "$($Config.RootPath)\$($NewInstance.Name)\Virtual Machines"
-    }
+    $Default = "$($Config.RootPath)\$($NewInstance.Name)\Virtual Machines"
     Do {
         $New = Read-Host "Path to VM Folder? [$Default]"
         If (!($New)) {
@@ -125,11 +124,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.VMPath = $New
 
     #Set HDD Folder
-    If ($OldInstance.HDDPath) {
-        $Default = $OldInstance.HDDPath
-    }Else{
-        $Default = "$($Config.RootPath)\$($NewInstance.Name)\Virtual Hard Disks"
-    }
+    $Default = "$($Config.RootPath)\$($NewInstance.Name)\Virtual Hard Disks"
     Do {
         $New = Read-Host "Path to HDD folder? [$Default]"
         If (!($New)) {
@@ -138,12 +133,8 @@ Function Set-BTRInstanceConfig {
     }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
     $NewInstance.HDDPath = $New
 
-    #Set Sanpshot Folder
-    If ($OldInstance.SnapShotPath) {
-        $Default = $OldInstance.SnapShotPath
-    }Else{
-        $Default = "$($Config.RootPath)\$($NewInstance.Name)\Snapshots"
-    }
+    #Set Snapshot Folder
+    $Default = "$($Config.RootPath)\$($NewInstance.Name)\Snapshots"
     Do {
         $New = Read-Host "Path to snapshot folder? [$Default]"
         If (!($New)) {
@@ -153,11 +144,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.SnapShotPath = $New
 
     #Set VM Temp Folder
-    If ($OldInstance.VMTempFolder) {
-        $Default = $OldInstance.VMTempFolder
-    }Else{
-        $Default = "C:\Temp"
-    }
+    $Default = "C:\Temp"
     Do {
         $New = Read-Host "Path to temp folder on VMs? [$Default]"
         If (!($New)) {
@@ -167,11 +154,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.VMTempFolder = $New
 
     #Set Use NAT
-    If ($OldInstance.UseNAT) {
-        $Default = $OldInstance.UseNAT
-    }Else{
-        $Default = "Y"
-    }
+    $Default = "Y"
     Do {
         $New = Read-Host "Use NAT on switch (Y/N) [$Default]"
         If (!($New)) {
@@ -180,14 +163,14 @@ Function Set-BTRInstanceConfig {
             $New = $New.ToUpper()
         }
     }Until ($New -Match '[YN]')
-    $NewInstance.UseNAT = $New
+    If ($New -eq 'Y') {
+        $NewInstance.UseNAT = $True
+    }Else{
+        $NewInstance.UseNAT = $False
+    }
 
     #Set IP
-    If ($OldInstance.IPPrefix) {
-        $Default = $OldInstance.IPPrefix
-    }Else{
-        $Default = "192.168.$(Get-Random -Minimum 2 -Maximum 254)"
-    }
+    $Default = "192.168.$(Get-Random -Minimum 2 -Maximum 254)"
     Do {
         $New = Read-Host "Network Address [$Default]"
         If (!($New)) {
@@ -199,11 +182,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.IPPrefix = $New
 
     #Set Subnet Mask and Subnet Mask Length
-    If ($OldInstance.SubnetMask) {
-        $Default = $OldInstance.SubnetMask
-    }Else{
-        $Default = "255.255.255.0"
-    }
+    $Default = "255.255.255.0"
     Do {
         $New = Read-Host "Subnet Mask [$Default]"
         If (!($New)) {
@@ -211,14 +190,11 @@ Function Set-BTRInstanceConfig {
         }
     }Until ((($New.Split(".") | ForEach { ([Convert]::ToSTring($_,2)).PadLeft(8,'0') }) -join "").IndexOf('01') -eq -1)
     $NewInstance.SubnetMask = $New
-    $NewInstance.SubnetLength =  [RegEx]::Matches((($New.Split(".") | ForEach { ([Convert]::ToSTring($_,2)).PadLeft(8,'0') }) -join ""),'1').count
+    $Length = [RegEx]::Matches((($New.Split(".") | ForEach { ([Convert]::ToSTring($_,2)).PadLeft(8,'0') }) -join ""),'1').count
+    $NewInstance.SubNetLength = $Length
 
     #Set Gateway
-    If ($OldInstance.Gateway) {
-        $Default = $OldInstance.Gateway
-    }Else{
-        $Default = "$($NewInstance.IPPrefix).1"
-    }
+    $Default = "$($NewInstance.IPPrefix).1"
     Do {
         $New = Read-Host "Default Gateway [$Default]"
         If (!($New)) {
@@ -228,11 +204,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.Gateway = $New
 
     #Set Switch Name
-    If ($OldInstance.SwitchName) {
-        $Default = $OldInstance.SwitchName
-    }Else{
-        $Default = "$($NewInstance.Name)"
-    }
+    $Default = "$($NewInstance.Name)"
     $New = Read-Host "Name of Switch [$Default]"
     If (!($New)) {
         $New = $Default
@@ -240,11 +212,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.SwitchName = $New
 
     #Set Domain Name
-    If ($OldInstance.DomainName) {
-        $Default = $OldInstance.DomainName
-    }Else{
-        $Default = "$($NewInstance.Name).local"
-    }
+    $Default = "$($NewInstance.Name).local"
     Do {
         $New = Read-Host "Name of Domain [$Default]"
         If (!($New)) {
@@ -254,11 +222,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.DomainName = $New
 
     #Set NB Domain Name
-    If ($OldInstance.NBDomainName) {
-        $Default = $OldInstance.NBDomainName
-    }Else{
-        $Default = $NewInstance.DomainName.Split('.')[0]
-    }
+    $Default = $NewInstance.DomainName.Split('.')[0]
     Do {
         $New = Read-Host "NetBIOS Name of Domain [$Default]"
         If (!($New)) {
@@ -268,11 +232,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.NBDomainName = $New
 
     #Set Admin Account Name
-    If ($OldInstance.AdminName) {
-        $Default = $OldInstance.AdminName
-    }Else{
-        $Default = "Administrator"
-    }
+    $Default = "Administrator"
     Do {
         $New = Read-Host "Administrator account? [$Default]"
         If (!($New)) {
@@ -283,11 +243,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.AdminNBName = "$($NewInstance.NBDomainName)\$New"
 
     #Set Admin Password
-    If ($OldInstance.AdminPassword) {
-        $Default = $OldInstance.AdminPassword
-    }Else{
-        $Default = "P@ssw0rd99"
-    }
+    $Default = "P@ssw0rd99"
     Do {
         Write-Host 'Password for admin account?'
         $New = Read-Host "Between 10-20 characters, must be complex [$Default]"
@@ -298,11 +254,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.AdminPassword = $New
 
     #Set Domain Controller Name
-    If ($OldInstance.DomainController) {
-        $Default = $OldInstance.DomainController
-    }Else{
-        $Default = "DC1"
-    }
+    $Default = "DC1"
     Do {
         $New = Read-Host "Domain Controller Name [$Default]"
         If (!($New)) {
@@ -312,11 +264,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.DomainController = $New
 
     #Set Domain Controller IP
-    If ($OldInstance.DomainControllerIP) {
-        $Default = $OldInstance.DomainControllerIP
-    }Else{
-        $Default = "$($NewInstance.IPPrefix).50"
-    }
+    $Default = "$($NewInstance.IPPrefix).50"
     Do {
         $New = Read-Host "IP for Domain Controller $($NewInstance.DomainController)? [$Default]"
         If (!($New)) {
@@ -326,11 +274,7 @@ Function Set-BTRInstanceConfig {
     $NewInstance.DomainControllerIP = $New
 
     #Set Use DHCP
-    If ($OldInstance.UseDHCP) {
-        $Default = $OldInstance.UseDHCP
-    }Else{
-        $Default = "Y"
-    }
+    $Default = "Y"
     Do {
         $New = Read-Host "Use DHCP on network (Y/N) [$Default]"
         If (!($New)) {
@@ -339,15 +283,15 @@ Function Set-BTRInstanceConfig {
             $New = $New.ToUpper()
         }
     }Until ($New -Match '[YN]')
-    $NewInstance.UseDHCP = $New
+    If ($New -eq 'Y') {
+        $NewInstance.UseDHCP = $True
+    }Else{
+        $NewInstance.UseDHCP = $False
+    }
 
     #Set DHCP Start
     If ($NewInstance.UseDHCP -eq 'Y') {
-        If ($OldInstance.DHCPStart) {
-            $Default = $OldInstance.DHCPStart
-        }Else{
-            $Default = "100"
-        }
+        $Default = "100"
         Do {
             $New = Read-Host "Start DHCP at? [$Default]"
             If (!($New)) {
@@ -359,11 +303,7 @@ Function Set-BTRInstanceConfig {
 
     #Set DHCP End
     If ($NewInstance.UseDHCP -eq 'Y') {
-        If ($OldInstance.DHCPStop) {
-            $Default = $OldInstance.DHCPStop
-        }Else{
-            $Default = "200"
-        }
+        $Default = "200"
         Do {
             $New = Read-Host "Stop DHCP at? [$Default]"
             If (!($New)) {
@@ -376,53 +316,313 @@ Function Set-BTRInstanceConfig {
     Return $NewInstance
 }
 
+Function Get-BTRBaseImageConfig {
+     Param (
+        [Parameter(Mandatory=$True)]$Config,
+        [Parameter(Mandatory=$True)]$Instance
+    )
 
-#Look for Server configuration
-If (!($BeaterConfig = Read-BTRFromRegistry -Root 'HKLM:SOFTWARE\HobbyLobby\Beater')) {
-    $BeaterConfig = @{}
-    If (Read-Host "Unable to read existing config. Would you like to input basic configuration now?" -Eq "y") {
-        If (Set-BTRServerConfigr -Config ([Ref]$BeaterConfig)) {
-            If (Write-BTRToRegistry -Item $BeaterConfig -Root 'HKLM:SOFTWARE\HobbyLobby\Beater') {
-                Write-BTRLog "Successfuly updated config" -Level Progress
-            }Else{
-                Write-BTRLog "Failed to write server config to registry" -Level Error
+    $NewBaseImage = @{}
+
+    #Set Name
+    $Default = "Server2019"
+    Do {
+        $New = Read-Host "Base image name? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{3,15}$")
+    $NewBaseImage.Name = $New
+
+    #Set OS Version
+    Do {
+        "Please Select OS Version:"
+        "     1. Server 2019"
+        "     2. Server 2016"
+        "     3. Windows 10 LTSC 2019"
+        $Choice = Read-Host "(1-3)"
+    }Until ($Choice -ge 1 -and $Choice -le 3)
+    Switch ($Choice) {
+        1 {
+            $NewBaseImage.Product = "Server 2019"
+            $DefaultKey = "N69G4-B89J2-4G8F4-WWYCC-J464C"
+            $DefaultImageIndex = 2
+            Break
+        }2{
+            $NewBaseImage.Product = "Server 2016"
+            $DefaultKey = "WC2BQ-8NRM3-FDDYY-2BFGV-KHKQY"
+            $DefaultImageIndex = 2
+            Break
+        }3{
+            $NewBaseImage.Product = "Win 10 LTSC 2019"
+            $DefaultKey = "M7XTQ-FN8P6-TTKYV-9D4CC-J462D"
+            $DefaultImageIndex = 1
+            Break
+        }
+    }
+
+    #Set file name
+    $Default = "$($Config.BaseImagePath)\$($NewBaseImage.Name)-C.vhdx"
+    Do {
+        $New = Read-Host "Base image file name? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
+    $NewBaseImage.BaseImage = $New
+
+    #Set ISO Name
+    $Default = "$($Instance.WorkingFolder)\$($NewBaseImage.Name)-Install.iso"
+    Do {
+        $New = Read-Host "Base image install ISO name? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
+    $NewBaseImage.CustomISO = $New
+
+    #Set Update Source
+    If ((Read-Host "Do you want to use a custom source for M$ updates? (Y/N)") -ne "N") {
+        $Default = "https://HPWSUS01.hobbylobby.corp:8531"
+        Do {
+            $New = Read-Host "M$ update source? [$Default]"
+            If (!($New)) {
+                $New = $Default
             }
+        }Until ($New -Match "(https?|[s]?)(:\/\/)([^\s,]+)")
+        $NewBaseImage.UpdateSource = $New
+    }
+
+    #Chose File
+    Write-Host "Please chose an install .ISO"
+    [System.Reflection.Assembly]::LoadWithPartialName(“System.windows.forms”) | Out-Null
+    $OpenFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+    $OpenFileDialog.initialDirectory = $Instance.WorkingFolder
+    $OpenFileDialog.filter = “Disk Image (*.iso)| *.iso”
+    $OpenFileDialog.ShowDialog() | Out-Null
+    $NewBaseImage.InstallMedia = $OpenFileDialog.filename
+
+    #Set Product Key
+    Do {
+        $New = Read-Host "Product Key? [$DefaultKey]"
+        If (!($New)) {
+            $New = $DefaultKey
+        }
+    }Until ($New -Match "^[A-Z0-9]{4,8}(-[A-Z0-9]{4,8}){3,8}$")
+    $NewBaseImage.ProductKey = $New
+
+    #Set Base Image Index
+    Do {
+        $New = Read-Host "Image Index? [$DefaultImageIndex]"
+        If (!($New)) {
+            $New = $DefaultImageIndex
+        }
+    }Until ($New -ge 1 -and $New -le 6)
+    $NewBaseImage.ImageIndex = $New
+
+    #Set OSMD path
+    $Default = $Config.OscdimgPath
+    Do {
+        $New = Read-Host "Path to oscdimg.exe? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Like "*oscdimg.exe")
+    $NewBaseImage.OscdimgPath = $New
+
+    Return $NewBaseImage
+}
+
+
+
+#Get/Set Server Config
+If ($BeaterConfig = Read-BTRFromRegistry -Root $RegRoot) {
+    Write-BTRLog "Found configuration information in registry at $RegRoot" -Level Debug
+}Else{
+    Write-BTRLog "Did not find server configuration information in registry at $RegRoot" -Level Debug
+    If ((Read-Host "Unable to read existing server config. Would you like to configure server now? (Y/N)") -eq "y") {
+        If ($BeaterConfig = Get-BTRServerConfig) {
+            Write-BTRLog "Finished entering server config" -Level Debug
         }Else{
             Write-BTRLog "Didn't finish server config." -Level Error
             Return
         }
+    }Else{
+        Write-BTRLog "You must configure the server to continue" -Level Error
+        Return
     }
 }
+
+
 
 #Check and configure server
 If (Configure-BTRServer -Config $BeaterConfig) {
     Write-BTRLog "Configured server!" -Level Progress
 }Else{
     Write-BTRLog "Failed to configure server" -Level Error
+    Return
 }
 
-#Check for Valid Instance
-If (!($BeaterConfig.DefaultInstance)) {
-    If (Read-Host "There is no default instance, would you like to create one? (y/n)" -eq "Y") {
-        Set-BTRInstanceConfig -Config $BeaterConfig
+#Write Server Config to registry
+If (!(Test-Path $RegRoot -ErrorAction SilentlyContinue)) {
+    $Error.Clear()
+    REG ADD $($RegRoot -replace ":","\") /f *>&1 | Out-Null
+    If ($Error) {
+        Write-BTRLog "Unable to create $RegRoot. Error: $($Error[0].Exception.Message)." -Level Error
+    }Else{
+        Write-BTRLog "Created $RegRoot." -Level Debug
+    }
+}
+If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
+    Write-BTRLog "Successfully updated config" -Level Progress
+}Else{
+    Write-BTRLog "Failed to write server config to registry" -Level Error
+    Return
+}
+
+#Get/Set Default Instance configuration
+If ($BeaterConfig.DefaultInstance) {
+    Write-BTRLog "Default instance is $($BeaterConfig.DefaultInstance)" -Level Debug
+}Else{
+    If ($BeaterConfig.Instances) {
+        If (Read-Host "There is no default instance, but there are instances defined, would you like to set a default? (y/n)" -eq "Y") {
+            "Yea I haven't writen this yet.  Go fish."
+            Return
+        }Else{
+            "You must define a default instance to continue"
+            Return
+        }
+    }Else{
+        If (Read-Host "There are no defined instances.  Would you like to create one? (y/n)" -eq "Y") {
+            $NewInstance = Get-BTRInstanceConfig -Config $BeaterConfig
+            $BeaterConfig.Add('Instances',@{})
+            $BeaterConfig.DefaultInstance = $NewInstance.Name
+            $BeaterConfig.Instances.Add($NewInstance.Name, $NewInstance)
+        }Else{
+            "You must have a default instance to continue."
+            Return
+        }
     }
 }
         
+#Validate or Build Default Instance
+If (Configure-BTRInstance -Instance $BeaterConfig.Instances[$($BeaterConfig.DefaultInstance)]) {
+    Write-BTRLog "Succesfully configured Default Instance $($BeaterConfig.DefaultInstance)!" -Level Progress
+}Else{
+    Write-BTRLog "Failed to configure Default Instance $($BeaterConfig.DefaultInstance)!" -Level Error
+    Return
+}
+
+#Write Server Config to registry
+If (!(Test-Path $RegRoot -ErrorAction SilentlyContinue)) {
+    $Error.Clear()
+    REG ADD $($RegRoot -replace ":","\") /f *>&1 | Out-Null
+    If ($Error) {
+        Write-BTRLog "Unable to create $RegRoot. Error: $($Error[0].Exception.Message)." -Level Error
+    }Else{
+        Write-BTRLog "Created $RegRoot." -Level Debug
+    }
+}
+If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
+    Write-BTRLog "Successfully updated config" -Level Progress
+}Else{
+    Write-BTRLog "Failed to write server config to registry" -Level Error
+    Return
+}
+
+
+
+#Get/Set Default Base Image
+If ($DefaultBaseImageName = $BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage) {
+    Write-BTRLog "Base image settings looks good" -Level Debug
+}Else{
+    If ((Read-Host "Default Base image settings do not exist.  Would you like to create one now? (Y/N)") -eq 'Y') {
+        If ($NewBase = Get-BTRBaseImageConfig -Config $BeaterConfig -Instance $BeaterConfig.Instances[$BeaterConfig.DefaultInstance]) {
+            If(!($BeaterConfig.BaseImages)) {
+                $BeaterConfig.Add('BaseImages',@{})
+            }
+            $BeaterConfig.BaseImages.Add($NewBase.Name, $NewBase)
+            $BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage = $NewBase.Name
+        }Else{
+            Write-BTRLog "Failed to create default base image settings" -Level Error
+        }
+    }Else{
+        Write-BTRLog "You must configure a base image to continue" -Level Error
+    }
+
+}
+
+#Write Server Config to registry
+If (!(Test-Path $RegRoot -ErrorAction SilentlyContinue)) {
+    $Error.Clear()
+    REG ADD $($RegRoot -replace ":","\") /f *>&1 | Out-Null
+    If ($Error) {
+        Write-BTRLog "Unable to create $RegRoot. Error: $($Error[0].Exception.Message)." -Level Error
+    }Else{
+        Write-BTRLog "Created $RegRoot." -Level Debug
+    }
+}
+If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
+    Write-BTRLog "Successfully updated config" -Level Progress
+}Else{
+    Write-BTRLog "Failed to write server config to registry" -Level Error
+    Return
+}
+
+#Check for and create base image
+$DefaultInstance = $BeaterConfig.Instances[$BeaterConfig.DefaultInstance]
+$BaseImage = $BeaterConfig.BaseImages[$BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage]
+If (!(Test-Path -Path $BaseImage.BaseImage)) {
+    If (!(Test-Path -Path $BaseImage.InstallMedia -ErrorAction SilentlyContinue)) {
+        If (Create-BTRISO -Instance $DefaultInstance -BaseImage $BaseImage) {
+            Write-BTRLog "Created ISO " -Level Progress
+        }Else{
+            Write-BTRLog "Failed to create ISO" -Level Error
+        }
+    }Else{
+        Write-BTRLog "Base Image ISO Exists." -Level Debug
+    }
+
+    #Create base image
+    If (Create-BTRBaseVM -Instance $DefaultInstance -BaseImage $BaseImage) {
+        Write-BTRLog "Base vm created waiting 5 seconds for VM to stabilize." -Level Progress
+        Start-Sleep -Seconds 5
+        Write-BTRLog "Starting VM"
+        $Error.Clear()
+        Hyper-V\Start-VM -VMName $BaseImage.Name -ErrorAction SilentlyContinue
+        If ($Error) {
+            Write-BTRLog "Unable to start VM $($BaseImage.Name). Error: $($Error[0].Exception.Message)." -Level Error
+            Return $false
+        }Else{
+            Write-BTRLog "Started VM $($BaseImage.Name)." -Level Progress
+        }
+
+        #Wait for VM to come online
+        Write-BTRLog "Waiting 5 minutes for VM deploy to finsh" -Level Progress
+        Start-Sleep -Seconds 300
+        Wait-BTRVMOnline -Instance $DefaultInstance -VMName $BaseImage.Name
+
+        #Configure Base BM
+        If (Configure-BTRBaseImage -Instance $DefaultInstance -BaseImage $BaseImage) {
+            Write-BTRLog "Configured base image" -Level Progress
+            If (Prep-BTRBaseImage -Instance $BeaterConfig.Instances[$BeaterConfig.DefaultInstance] -BaseImage $BeaterConfig.BaseImages[$BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage]) {
+                Write-BTRLog "Prepped base image" -Level Progress
+            }Else{
+                Write-BTRLog "Failed to prep base image" -Level Debug
+                Return
+            }
+        }Else{
+            Write-BTRLog "Failed to configure base image" -Level Debug
+            Return
+        }
+    }Else{
+        Write-BTRLog "Failed to create base image" -Level Debug
+        Return
+    }
+}Else{
+    Write-BTRLog "Base image exists" -Level Debug
+}
         
-
-
-#Build Instance config
-
-#Validate Instace
-
-#Build Instance
-
-#Check for Valid Base Image
-
-#Build Base Image config
-
-#Validate Base Image
-
-#Build Base Image
+#Build Domain
 
 #Main menu

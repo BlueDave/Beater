@@ -94,6 +94,15 @@ Import-Module Hyper-V
 #$BeaterInstance.LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential($BeaterInstance.AdminName,$SecurePassword)
 
 
+Function Get-BTRBaseImageConfig {
+    Param (
+        [Parameter(Mandatory=$True)]$ServerConfig,
+        [Parameter(Mandatory=$True)]$Instance
+    )
+
+
+
+
 
 ##OpenLogFile
 #$LogFile = "$($BeaterInstance.WorkingFolder)\Beater.log"
@@ -109,7 +118,7 @@ $BeaterConfig = Read-BTRFromRegistry -Root 'HKLM:SOFTWARE\HobbyLobby\Beater'
 
 #Validate-BTRHost -Config $BeaterConfig
 
-Set-BTRInstanceConfig -Config $BeaterConfig
+#Set-BTRInstanceConfig -Config $BeaterConfig
 
 
 #Install-BTREnvironment -Instance $BeaterInstance
