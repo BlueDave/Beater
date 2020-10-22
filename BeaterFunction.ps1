@@ -85,7 +85,7 @@ Function Write-BTRToRegistry {
                     Write-BTRLog "Can't add string value $Name to $Root. Error: $($Error[0].Exception.Message)." -Level Error
                     Return $false
                 }Else{
-                    Write-BTRLog "Added to $Root $($Item.Key) = $($SubItem.Value)" -Level Debug
+                    #Write-BTRLog "Added to $Root $($Item.Key) = $($SubItem.Value)" -Level Debug
                 }
             }
         } ElseIf ($SubItem.Value.GetType().Name -eq 'Boolean') {
@@ -583,14 +583,17 @@ Function Configure-BTRInstance {
             Write-BTRLog "Host already has IP set for NIC attached to vSwitch $($Instance.SwitchName)." -Level Debug
         }
 
-        #Wait 5 seconds for switch configuration to complete
-        Start-Sleep -Seconds 5
 
         #Setting network to private
+        Write-BTRLog "Waiting for switch to identity itself" -Level Debug
+        Do {
+            Sleep -Seconds 1
+        }Until((Get-NetConnectionProfile | Where InterfaceAlias -Like "*$($Instance.SwitchName)*" | select -ExpandProperty Name) -notlike 'Identifying*')
+        
         Write-BTRLog "Checking if network is set to Private" -Level Debug
         If ($(Get-NetConnectionProfile | Where InterfaceAlias -Like "*$($Instance.SwitchName)*" | select -ExpandProperty NetworkCategory) -ne 'Private' ) {
             $Error.Clear()
-            Get-NetConnectionProfile | Where InterfaceAlias -Like "*$($Instance.SwitchName)*" | Set-NetConnectionProfile -NetworkCategory Private
+            Get-NetConnectionProfile | Where InterfaceAlias -Like "*$($Instance.SwitchName)*" | Set-NetConnectionProfile -NetworkCategory Private 
             If ($Error) {
                 Write-BTRLog "Unable to set network to private. Error: $($Error[0].Exception.Message)" -Level Error
                 Return $False
@@ -1064,8 +1067,13 @@ Function Configure-BTRBaseImage {
     Write-BTRLog "Entering configure-BTRBaseImage" -Level Debug
 
     #Figure Creditials
+    $Error.Clear()
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
     $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential("$($Instance.Name)\$($Instance.AdminName)", $SecurePassword)
+    If ($Error) {
+        Write-BTRLog "Can't figure out local creditals. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }
 
     $VMName = $BaseImage.Name
     Write-BTRLog "Making sure $VMName exists" -Level Debug
@@ -1073,6 +1081,28 @@ Function Configure-BTRBaseImage {
         Write-BTRLog "$VMName does not exist" -Level Error
         Return $False
     }
+
+    #Wait for VM to finish install
+    $MaxWaitTime = 10
+    $RetryEvery = 15
+    Write-BTRLog "Connecting to $VMName with max wait time $MaxWaitTime minutes." -Level Progress
+    $GiveUpAt = (Get-Date).AddMinutes($MaxWaitTime)
+    Do {
+        $Test = Invoke-Command -VMName $VMName -Credential $LocalCreds -ErrorAction SilentlyContinue -ScriptBlock {Get-Verb}
+        If ($Error) {
+		    Write-BTRLog "Failed to connect to $VMName with PSRemoting. Error: $($Error[0].Exception.Message)." -Level Debug
+            Write-BTRLog "Will try again in $RetryEvery seconds. " -Level Debug
+            If ($(Get-Date) -ge $GiveUpAt) {
+                Write-BTRLog "We've waited $MaxWaitTime minutes and not connected to $VMName.  Dying..." -Level Error
+                Return $False
+            }Else{
+                $Error.Clear()
+                Start-Sleep -Seconds $RetryEvery
+            }
+	    }Else{
+            Write-BTRLog "Connected to $HostName with PSRemoting" -Level Progress
+        }
+    } Until ($Test)
 
     Write-BTRLog "Checking if base image is set to use static IP" -Level Debug
     If (!($BaseImage.UseDHCP)) {
@@ -1306,29 +1336,29 @@ Function Configure-BTRBaseImage {
 	    $Shortcut.Save()
     }
     
-    If ($BaseImage.UseWSUS) {
+    If ($BaseImage.UpdateSource) {
         "Configuring Updates"
         Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
-            REG ADD HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate /v TargetGroup /d SVDI /t REG_SZ /f *>&1 | Out-Null
-            REG ADD HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate /v TargetGroupEnabled /d 1 /t REG_DWORD /f *>&1 | Out-Null
-            Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate" -Name WUServer -Value $Using:BaseImage.UpdateSource -Force -Confirm:$False *>&1 | Out-Null
-            Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate" -Name WUStatusServer -Value $Using:BaseImage.UpdateSource -Force -Confirm:$False *>&1 | Out-Null
-            REG ADD HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate\AU /v UseWUServer /d 1 /t REG_DWORD /f *>&1 | Out-Null
+            Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate" -Name "TargetGroup" -Value "SVDI" -Force -Confirm:$False *>&1 | Out-Null
+            Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate" -Name "TargetGroupEnabled" -Value "1" -Force -Confirm:$False *>&1 | Out-Null
+            Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate" -Name "WUServer" -Value $Using:BaseImage.UpdateSource -Force -Confirm:$False *>&1 | Out-Null
+            Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate" -Name "WUStatusServer" -Value $Using:BaseImage.UpdateSource -Force -Confirm:$False *>&1 | Out-Null
+            Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "UseWUServer" -Value 1 -Force -Confirm:$False *>&1 | Out-Null
         }
     }
 
     "Installing Windows Update Module"
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Set-ExecutionPolicy Unrestricted -Force -Confirm:$False *>&1 | Out-Null
-        Install-PackageProvider -Name NuGet -ErrorAction SilentlyContinue *>&1 | Out-Null
-        Register-PSRepository -Default -InstallationPolicy Trusted -ErrorAction SilentlyContinue *>&1 | Out-Null
-        Install-Module -Name PSWindowsUpdate -ErrorAction SilentlyContinue *>&1 | Out-Null
-        Import-Module -Name PSWindowsUpdate 
+        Install-PackageProvider -Name NuGet -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
+        Register-PSRepository -Default -InstallationPolicy Trusted -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
+        Install-Module -Name PSWindowsUpdate -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
+        Import-Module -Name PSWindowsUpdate
     }
 
     "Checking for updates"
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
-        Get-WindowsUpdate
+        Get-WindowsUpdate -Confirm:$False -ErrorAction SilentlyContinue  *>&1 | Out-Null
     }
 
     "Installing updates"

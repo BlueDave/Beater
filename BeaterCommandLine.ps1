@@ -313,6 +313,16 @@ Function Get-BTRInstanceConfig {
         $NewInstance.DHCPStop = $New
     }
 
+    #Set Time Zone
+    $Default = "Central Standard Time"
+    Do {
+        $New = Read-Host "Time Zone? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until (Get-TimeZone -ListAvailable | Where Standardname -eq $New)
+    $NewInstance.TimeZone = $New
+
     Return $NewInstance
 }
 
@@ -324,42 +334,44 @@ Function Get-BTRBaseImageConfig {
 
     $NewBaseImage = @{}
 
-    #Set Name
-    $Default = "Server2019"
-    Do {
-        $New = Read-Host "Base image name? [$Default]"
-        If (!($New)) {
-            $New = $Default
-        }
-    }Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{3,15}$")
-    $NewBaseImage.Name = $New
-
     #Set OS Version
     Do {
-        "Please Select OS Version:"
-        "     1. Server 2019"
-        "     2. Server 2016"
-        "     3. Windows 10 LTSC 2019"
+        Write-Host "Please Select OS Version:"
+        Write-Host "     1. Server 2019"
+        Write-Host "     2. Server 2016"
+        Write-Host "     3. Windows 10 LTSC 2019"
         $Choice = Read-Host "(1-3)"
     }Until ($Choice -ge 1 -and $Choice -le 3)
     Switch ($Choice) {
         1 {
-            $NewBaseImage.Product = "Server 2019"
+            $NewBaseImage.Product = "Server2019"
+            $DefautName = "Server2019"
             $DefaultKey = "N69G4-B89J2-4G8F4-WWYCC-J464C"
             $DefaultImageIndex = 2
             Break
         }2{
             $NewBaseImage.Product = "Server 2016"
+            $DefautName = "Server2016"
             $DefaultKey = "WC2BQ-8NRM3-FDDYY-2BFGV-KHKQY"
             $DefaultImageIndex = 2
             Break
         }3{
-            $NewBaseImage.Product = "Win 10 LTSC 2019"
+            $NewBaseImage.Product = "Win10LTSC2019"
+            $DefautName = "LTSC2019"
             $DefaultKey = "M7XTQ-FN8P6-TTKYV-9D4CC-J462D"
             $DefaultImageIndex = 1
             Break
         }
     }
+
+    #Set Name
+    Do {
+        $New = Read-Host "Base image name? [$DefautName]"
+        If (!($New)) {
+            $New = $DefautName
+        }
+    }Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{3,15}$")
+    $NewBaseImage.Name = $New
 
     #Set file name
     $Default = "$($Config.BaseImagePath)\$($NewBaseImage.Name)-C.vhdx"
@@ -382,7 +394,7 @@ Function Get-BTRBaseImageConfig {
     $NewBaseImage.CustomISO = $New
 
     #Set Update Source
-    If ((Read-Host "Do you want to use a custom source for M$ updates? (Y/N)") -ne "N") {
+    If ((Read-Host "Do you want to use a custom source for M$ updates? (Y/N) [Y]") -ne "N") {
         $Default = "https://HPWSUS01.hobbylobby.corp:8531"
         Do {
             $New = Read-Host "M$ update source? [$Default]"
@@ -434,7 +446,7 @@ Function Get-BTRBaseImageConfig {
 }
 
 
-
+#region ServerSetup
 #Get/Set Server Config
 If ($BeaterConfig = Read-BTRFromRegistry -Root $RegRoot) {
     Write-BTRLog "Found configuration information in registry at $RegRoot" -Level Debug
@@ -452,8 +464,6 @@ If ($BeaterConfig = Read-BTRFromRegistry -Root $RegRoot) {
         Return
     }
 }
-
-
 
 #Check and configure server
 If (Configure-BTRServer -Config $BeaterConfig) {
@@ -479,7 +489,9 @@ If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
     Write-BTRLog "Failed to write server config to registry" -Level Error
     Return
 }
+#endregion
 
+#region InstanceSetup
 #Get/Set Default Instance configuration
 If ($BeaterConfig.DefaultInstance) {
     Write-BTRLog "Default instance is $($BeaterConfig.DefaultInstance)" -Level Debug
@@ -493,7 +505,7 @@ If ($BeaterConfig.DefaultInstance) {
             Return
         }
     }Else{
-        If (Read-Host "There are no defined instances.  Would you like to create one? (y/n)" -eq "Y") {
+        If ((Read-Host "There are no instances.  Would you like to create one now? (y/n)") -eq "Y") {
             $NewInstance = Get-BTRInstanceConfig -Config $BeaterConfig
             $BeaterConfig.Add('Instances',@{})
             $BeaterConfig.DefaultInstance = $NewInstance.Name
@@ -514,26 +526,17 @@ If (Configure-BTRInstance -Instance $BeaterConfig.Instances[$($BeaterConfig.Defa
 }
 
 #Write Server Config to registry
-If (!(Test-Path $RegRoot -ErrorAction SilentlyContinue)) {
-    $Error.Clear()
-    REG ADD $($RegRoot -replace ":","\") /f *>&1 | Out-Null
-    If ($Error) {
-        Write-BTRLog "Unable to create $RegRoot. Error: $($Error[0].Exception.Message)." -Level Error
-    }Else{
-        Write-BTRLog "Created $RegRoot." -Level Debug
-    }
-}
 If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
     Write-BTRLog "Successfully updated config" -Level Progress
 }Else{
     Write-BTRLog "Failed to write server config to registry" -Level Error
     Return
 }
+#endregion
 
-
-
+#region BaseImage
 #Get/Set Default Base Image
-If ($DefaultBaseImageName = $BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage) {
+If ($BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage) {
     Write-BTRLog "Base image settings looks good" -Level Debug
 }Else{
     If ((Read-Host "Default Base image settings do not exist.  Would you like to create one now? (Y/N)") -eq 'Y') {
@@ -552,32 +555,16 @@ If ($DefaultBaseImageName = $BeaterConfig.Instances[$BeaterConfig.DefaultInstanc
 
 }
 
-#Write Server Config to registry
-If (!(Test-Path $RegRoot -ErrorAction SilentlyContinue)) {
-    $Error.Clear()
-    REG ADD $($RegRoot -replace ":","\") /f *>&1 | Out-Null
-    If ($Error) {
-        Write-BTRLog "Unable to create $RegRoot. Error: $($Error[0].Exception.Message)." -Level Error
-    }Else{
-        Write-BTRLog "Created $RegRoot." -Level Debug
-    }
-}
-If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
-    Write-BTRLog "Successfully updated config" -Level Progress
-}Else{
-    Write-BTRLog "Failed to write server config to registry" -Level Error
-    Return
-}
-
 #Check for and create base image
 $DefaultInstance = $BeaterConfig.Instances[$BeaterConfig.DefaultInstance]
 $BaseImage = $BeaterConfig.BaseImages[$BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage]
 If (!(Test-Path -Path $BaseImage.BaseImage)) {
-    If (!(Test-Path -Path $BaseImage.InstallMedia -ErrorAction SilentlyContinue)) {
+    If (!(Test-Path -Path $BaseImage.CustomISO -ErrorAction SilentlyContinue)) {
         If (Create-BTRISO -Instance $DefaultInstance -BaseImage $BaseImage) {
             Write-BTRLog "Created ISO " -Level Progress
         }Else{
             Write-BTRLog "Failed to create ISO" -Level Error
+            Return
         }
     }Else{
         Write-BTRLog "Base Image ISO Exists." -Level Debug
@@ -585,28 +572,27 @@ If (!(Test-Path -Path $BaseImage.BaseImage)) {
 
     #Create base image
     If (Create-BTRBaseVM -Instance $DefaultInstance -BaseImage $BaseImage) {
-        Write-BTRLog "Base vm created waiting 5 seconds for VM to stabilize." -Level Progress
+        Write-BTRLog "Base vm created. Waiting 5 seconds for VM to stabilize." -Level Progress
         Start-Sleep -Seconds 5
         Write-BTRLog "Starting VM"
         $Error.Clear()
         Hyper-V\Start-VM -VMName $BaseImage.Name -ErrorAction SilentlyContinue
         If ($Error) {
             Write-BTRLog "Unable to start VM $($BaseImage.Name). Error: $($Error[0].Exception.Message)." -Level Error
-            Return $false
+            Return
         }Else{
             Write-BTRLog "Started VM $($BaseImage.Name)." -Level Progress
         }
 
         #Wait for VM to come online
-        Write-BTRLog "Waiting 5 minutes for VM deploy to finsh" -Level Progress
-        Start-Sleep -Seconds 300
-        Wait-BTRVMOnline -Instance $DefaultInstance -VMName $BaseImage.Name
+        Write-BTRLog "Waiting 3 minutes for VM deploy to finsh" -Level Progress
+        Start-Sleep -Seconds 180
 
-        #Configure Base BM
+        #Configure Base VM
         If (Configure-BTRBaseImage -Instance $DefaultInstance -BaseImage $BaseImage) {
             Write-BTRLog "Configured base image" -Level Progress
             If (Prep-BTRBaseImage -Instance $BeaterConfig.Instances[$BeaterConfig.DefaultInstance] -BaseImage $BeaterConfig.BaseImages[$BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage]) {
-                Write-BTRLog "Prepped base image" -Level Progress
+                #Write-BTRLog "Prepped base image" -Level Progress
             }Else{
                 Write-BTRLog "Failed to prep base image" -Level Debug
                 Return
@@ -622,6 +608,15 @@ If (!(Test-Path -Path $BaseImage.BaseImage)) {
 }Else{
     Write-BTRLog "Base image exists" -Level Debug
 }
+
+#Write Server Config to registry
+If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
+    Write-BTRLog "Successfully updated config" -Level Progress
+}Else{
+    Write-BTRLog "Failed to write server config to registry" -Level Error
+    Return
+}
+#endregion
         
 #Build Domain
 
