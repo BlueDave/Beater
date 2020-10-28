@@ -442,6 +442,23 @@ Function Get-BTRBaseImageConfig {
     }Until ($New -Like "*oscdimg.exe")
     $NewBaseImage.OscdimgPath = $New
 
+    #Set Use DHCP
+    #Set Use NAT
+    $Default = "N"
+    Do {
+        $New = Read-Host "Use DHCP to configure base image? (Y/N) [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }Else {
+            $New = $New.ToUpper()
+        }
+    }Until ($New -Match '[YN]')
+    If ($New -eq 'Y') {
+        $NewBaseImage.UseDHCP = $True
+    }Else{
+        $NewBaseImage.UseDHCP = $False
+    }
+
     Return $NewBaseImage
 }
 
@@ -539,7 +556,7 @@ If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
 If ($BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage) {
     Write-BTRLog "Base image settings looks good" -Level Debug
 }Else{
-    If ((Read-Host "Default Base image settings do not exist.  Would you like to create one now? (Y/N)") -eq 'Y') {
+    If ((Read-Host "Default Base image settings do not exist.  Would you like to configure a base image now? (Y/N)") -eq 'Y') {
         If ($NewBase = Get-BTRBaseImageConfig -Config $BeaterConfig -Instance $BeaterConfig.Instances[$BeaterConfig.DefaultInstance]) {
             If(!($BeaterConfig.BaseImages)) {
                 $BeaterConfig.Add('BaseImages',@{})
@@ -548,74 +565,100 @@ If ($BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage) {
             $BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage = $NewBase.Name
         }Else{
             Write-BTRLog "Failed to create default base image settings" -Level Error
+            Return
+        }
+        #Write Server Config to registry
+        If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
+            Write-BTRLog "Successfully updated config" -Level Progress
+        }Else{
+            Write-BTRLog "Failed to write server config to registry" -Level Error
+            Return
         }
     }Else{
         Write-BTRLog "You must configure a base image to continue" -Level Error
+        Return
     }
 
 }
+
 
 #Check for and create base image
 $DefaultInstance = $BeaterConfig.Instances[$BeaterConfig.DefaultInstance]
 $BaseImage = $BeaterConfig.BaseImages[$BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage]
-If (!(Test-Path -Path $BaseImage.BaseImage)) {
-    If (!(Test-Path -Path $BaseImage.CustomISO -ErrorAction SilentlyContinue)) {
-        If (Create-BTRISO -Instance $DefaultInstance -BaseImage $BaseImage) {
-            Write-BTRLog "Created ISO " -Level Progress
-        }Else{
-            Write-BTRLog "Failed to create ISO" -Level Error
-            Return
-        }
+If (Test-Path -Path $BaseImage.BaseImage) {
+    Write-Brtlog "Default base image exists at $($BaseImage.BaseImage)" -Level Debug
+}Else{
+    #Create ISO
+    If ((Read-Host "Default base image install media does not exist.  Would you like to create an installer? (Y/N)") -eq 'N') {
+        Write-BTRLog "You must create an install ISO to continue" -Level Error
+        Return
     }Else{
-        Write-BTRLog "Base Image ISO Exists." -Level Debug
-    }
-
-    #Create base image
-    If (Create-BTRBaseVM -Instance $DefaultInstance -BaseImage $BaseImage) {
-        Write-BTRLog "Base vm created. Waiting 5 seconds for VM to stabilize." -Level Progress
-        Start-Sleep -Seconds 5
-        Write-BTRLog "Starting VM"
-        $Error.Clear()
-        Hyper-V\Start-VM -VMName $BaseImage.Name -ErrorAction SilentlyContinue
-        If ($Error) {
-            Write-BTRLog "Unable to start VM $($BaseImage.Name). Error: $($Error[0].Exception.Message)." -Level Error
-            Return
-        }Else{
-            Write-BTRLog "Started VM $($BaseImage.Name)." -Level Progress
-        }
-
-        #Wait for VM to come online
-        Write-BTRLog "Waiting 3 minutes for VM deploy to finsh" -Level Progress
-        Start-Sleep -Seconds 180
-
-        #Configure Base VM
-        If (Configure-BTRBaseImage -Instance $DefaultInstance -BaseImage $BaseImage) {
-            Write-BTRLog "Configured base image" -Level Progress
-            If (Prep-BTRBaseImage -Instance $BeaterConfig.Instances[$BeaterConfig.DefaultInstance] -BaseImage $BeaterConfig.BaseImages[$BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage]) {
-                #Write-BTRLog "Prepped base image" -Level Progress
+        If (!(Test-Path -Path $BaseImage.CustomISO -ErrorAction SilentlyContinue)) {
+            If (Create-BTRISO -Instance $DefaultInstance -BaseImage $BaseImage) {
+                Write-BTRLog "Created ISO " -Level Progress
             }Else{
-                Write-BTRLog "Failed to prep base image" -Level Debug
+                Write-BTRLog "Failed to create ISO" -Level Error
                 Return
             }
         }Else{
-            Write-BTRLog "Failed to configure base image" -Level Debug
+            Write-BTRLog "Base Image ISO Exists." -Level Debug
+        } 
+    }
+
+    #Create base image
+    If ((Read-Host "Default base image does not exist.  Would you like to create it now? (Y/N)") -eq 'N') {
+        Write-BTRLog "You must create a base image to continue." -Level Error
+        Return
+    }Else{
+        If (Create-BTRBaseVM -Instance $DefaultInstance -BaseImage $BaseImage) {
+            Write-BTRLog "Base vm created. Waiting 5 seconds for VM to stabilize." -Level Progress
+            Start-Sleep -Seconds 5
+            Write-BTRLog "Starting VM"
+            $Error.Clear()
+            Hyper-V\Start-VM -VMName $BaseImage.Name -ErrorAction SilentlyContinue
+            If ($Error) {
+                Write-BTRLog "Unable to start VM $($BaseImage.Name). Error: $($Error[0].Exception.Message)." -Level Error
+                Return
+            }Else{
+                Write-BTRLog "Started VM $($BaseImage.Name)." -Level Progress
+            }
+
+            #Wait for VM to come online
+            Write-BTRLog "Waiting 3 minutes for VM deploy to finsh" -Level Progress
+            Start-Sleep -Seconds 180
+
+            #Configure Base VM
+            If (Configure-BTRBaseImage -Instance $DefaultInstance -BaseImage $BaseImage) {
+                Write-BTRLog "Configured base image" -Level Progress
+                #Waiting for reboot
+                $WaitForSeconds = 5
+                $MaxTries = 600
+                $VM = Get-VM -Name $BaseImage.Name
+                For ($Tries = 0; $Tries -le $MaxTries; $Tries++) {
+                    If ($VM.OperationalStatus -ne 'Ok') {
+                        "VM rebooting"
+                        Break
+                    }Else{
+                        Start-Sleep $WaitForSeconds
+                    }
+                }
+                If (Prep-BTRBaseImage -Instance $DefaultInstance -BaseImage $BaseImage) {
+                    #Write-BTRLog "Prepped base image" -Level Progress
+                }Else{
+                    Write-BTRLog "Failed to prep base image" -Level Debug
+                    Return
+                }
+            }Else{
+                Write-BTRLog "Failed to configure base image" -Level Debug
+                Return
+            }
+        }Else{
+            Write-BTRLog "Failed to create base image" -Level Debug
             Return
         }
-    }Else{
-        Write-BTRLog "Failed to create base image" -Level Debug
-        Return
-    }
-}Else{
-    Write-BTRLog "Base image exists" -Level Debug
 }
 
-#Write Server Config to registry
-If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
-    Write-BTRLog "Successfully updated config" -Level Progress
-}Else{
-    Write-BTRLog "Failed to write server config to registry" -Level Error
-    Return
-}
+
 #endregion
         
 #Build Domain

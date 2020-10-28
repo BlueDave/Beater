@@ -933,7 +933,7 @@ Function Create-BTRISO {
     $Args = "-m -o -u2 -udfver102 -bootdata:2#p0,e,b`"$ExtractFolder\boot\etfsboot.com`"#pEF,e,b`"$ExtractFolder\efi\microsoft\boot\efisys.bin`" `"$ExtractFolder`" $($BaseImage.CustomISO)"
         Write-BTRLog "With Arguments $Args" -level Debug
     $Error.Clear()
-    Start-Process -FilePath $BaseImage.OscdimgPath -ArgumentList $Args  -Wait -WindowStyle Normal -ErrorAction SilentlyContinue
+    Start-Process -FilePath $BaseImage.OscdimgPath -ArgumentList $Args  -Wait -WindowStyle Minimized -ErrorAction SilentlyContinue
     If ($LASTEXITCODE -or $Error) {
         Write-BTRLog "Failed to create $($BaseImage.CustomISO).  Error Code $LASTEXITCODE." -Level Error
         Return
@@ -1119,7 +1119,7 @@ Function Configure-BTRBaseImage {
                 Write-BTRLog "Couldn't get next IP from DC.  Defaulting to $($Instance.IPPrefix).253" -Level Debug
                 $IP = "$($Instance.IPPrefix).253"
             }Else{
-                Write-BTRLog "Next free IP is $IP"
+                Write-BTRLog "Next free IP is $IP" -Level Debug
             }
         }
 
@@ -1160,7 +1160,7 @@ Function Configure-BTRBaseImage {
             Write-BTRLog "Failed to set static IP to $IP. Error: $($Error[0].Exception.Message)" -Level Error
             Return $False
         }Else{
-            Write-BTRLog "Set static IP to $IP." -Level Debug
+            Write-BTRLog "Set static IP to $IP." -Level Progress
         }
 
         Write-BtrLog "configuring DNS" -Level Debug
@@ -1174,7 +1174,7 @@ Function Configure-BTRBaseImage {
             Write-BTRLog "Failed to configure DNS. Error: $($Error[0].Exception.Message)" -Level Error
             Return $False
         }Else{
-            Write-BTRLog "Configured DNS" -Level Debug
+            Write-BTRLog "Configured DNS" -Level Progress
         }
     }Else{
         Write-BTRLog "Base Image is set to use DHCP." -Level Debug
@@ -1187,8 +1187,9 @@ Function Configure-BTRBaseImage {
     }
     If($Error) {
         Write-BTRLog "Failed to disable IPv6. Error: $($Error[0].Exception.Message)" -Level Debug
+        Return $False
     }Else{
-        Write-BTRLog "Disabled IPv6" -Level Debug
+        Write-BTRLog "Disabled IPv6" -Level Progress
     }
 
     Write-BTRLog "Disabling IE Enhanced Security" -Level Debug
@@ -1229,16 +1230,12 @@ Function Configure-BTRBaseImage {
         Write-BTRLog "Failed to set Time Zone. Error: $($Error[0].Exception.Message)" -Level Error
         Return $False
     }Else{
-        Write-BTRLog "Set Time Zone" -Level Progress
+        Write-BTRLog "Set Time Zone to $($Instance.TimeZone)" -Level Progress
     }
 
     Write-BTRLog "Installing Optional Components" -Level Debug
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
-        If ($(Get-WmiObject Win32_OperatingSystem).ProductType -ne 1) {
-            Install-WindowsFeature -IncludeAllSubFeature RSAT -ErrorAction SilentlyContinue *>&1 | Out-Null
-            Install-WindowsFeature -IncludeAllSubFeature GPMC -ErrorAction SilentlyContinue *>&1 | Out-Null
-        }
         Add-WindowsCapability -Online -Name NetFx3~~~~ -Source D:\Sources\sxs -ErrorAction SilentlyContinue *>&1 | Out-Null
         Enable-WindowsOptionalFeature -Online -FeatureName TFTP -NoRestart -ErrorAction SilentlyContinue *>&1 | Out-Null
         Enable-WindowsOptionalFeature -Online -FeatureName TelnetClient -NoRestart -ErrorAction SilentlyContinue *>&1 | Out-Null
@@ -1248,6 +1245,23 @@ Function Configure-BTRBaseImage {
         Return $False
     }Else{
         Write-BTRLog "Installed Optional Components." -Level Progress
+    }
+
+    Write-BTRLog "Installing Admin Tools" -Level Debug
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
+        If ($(Get-WmiObject Win32_OperatingSystem).ProductType -ne 1) {
+            Install-WindowsFeature -IncludeAllSubFeature RSAT -ErrorAction SilentlyContinue *>&1 | Out-Null
+            Install-WindowsFeature -IncludeAllSubFeature GPMC -ErrorAction SilentlyContinue *>&1 | Out-Null
+        }Else{
+            #TODO: Figure out install for Win10
+        }
+    }
+    If($Error) {
+        Write-BTRLog "Failed to install Admin Tools. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Installed Admin Tools." -Level Progress
     }
     
     Write-BTRLog "Creating $($Instance.VMTempFolder)" -Level Debug
@@ -1261,6 +1275,7 @@ Function Configure-BTRBaseImage {
     $Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate
     If (!($Certificates = Get-ChildItem $Instance.CertFolder -ErrorAction SilentlyContinue)) {
         Write-BTRLog "Can't get list of certificates to install." -Level Debug
+        Return $False
     }Else{
         ForEach ($Certificate In $Certificates) {
             $DestinationPath = "$($Instance.VMTempFolder)\$($Certificate.Name)"
@@ -1279,13 +1294,13 @@ Function Configure-BTRBaseImage {
     }
 
     #Install Apps
-    "Copying apps over"
+    Write-BTRLog "Copying apps over" -Level Progress
     ForEach ($File In Get-ChildItem $Instance.AppFolder) {
         Hyper-V\Copy-VMFile -Name $VMName -SourcePath $File.FullName -DestinationPath "C:\Temp\$($File.Name)" -CreateFullPath -FileSource Host -Force
     }
     
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
-        "Installing Chrome"
+        #Installing Chrome
         If (Test-Path "C:\Temp\GoogleChromeStandaloneEnterprise64.msi") {
             Start-Process Msiexec.exe -ArgumentList '/i "C:\Temp\GoogleChromeStandaloneEnterprise64.msi" /qb!' -Wait
             Unregister-ScheduledTask -TaskName "GoogleUpdateTaskMachineCore" -Confirm:$False *>&1 | Out-Null
@@ -1295,31 +1310,31 @@ Function Configure-BTRBaseImage {
             New-ItemProperty -Path "HKLM:\Software\Policies\Google\Chrome" -Name "HardwareAccelerationModeEnabled" -PropertyType "DWORD" -Value "1" -Force -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
         }
     
-        "Installing NotePad++"
+        #Installing NotePad++
         If (Test-Path "C:\Temp\npp.*.Installer.exe") {
             Start-Process -FilePath "C:\Temp\npp.*.Installer.exe" -ArgumentList "/S" -Wait -NoNewWindow
 	        Rename-Item -Path "C:\Program Files (x86)\Notepad++\updater" -NewName "updater_disabled" -Force -Confirm:$False
         }
         
-        "Installing 7Zip"
+        #Installing 7Zip
         If (Test-Path "C:\Temp\7z*.exe") {
             Start-Process -FilePath "C:\Temp\7z*.exe" -ArgumentList "/S" -Wait -NoNewWindow
         }
         
-        "Installing Putty"
+        #Installing Putty
         If (Test-Path "C:\Temp\Putty-*-Installer.msi") {
             "Putty found"
             $PuttyFile = Get-Item "C:\Temp\Putty-*-Installer.msi"
             Start-Process Msiexec.exe -ArgumentList "/i $PuttyFile /qb!" -Wait -NoNewWindow
         }
     
-        "Installing WinSCP"
+        #Installing WinSCP
         If (Test-Path "C:\Temp\WinSCP-*-Setup.exe") {
             Start-Process -FilePath "C:\Temp\WinSCP-*-Setup.exe" -ArgumentList "/Silent /Norestart /ALLUSERS" -Wait -NoNewWindow
 	        Remove-Item "C:\Users\Public\Desktop\WinSCP.lnk" -Force -Confirm:$False
         }
     
-        "Creating IE Shortucts"
+        #Creating IE Shortucts
         $Shell = New-Object -ComObject Wscript.Shell
 	    $Shortcut = $Shell.CreateShortcut("C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Internet Explorer.lnk")
 	    $Shortcut.TargetPath = "C:\Program Files\internet explorer\iexplore.exe"
@@ -1327,7 +1342,7 @@ Function Configure-BTRBaseImage {
 	    $Shortcut.Description = "Finds and displays information and Web sites on the Internet."
 	    $Shortcut.Save()
     
-        "Creating RDP shortcut"
+        #Creating RDP shortcut
         $Shell = New-Object -ComObject Wscript.Shell
 	    $Shortcut = $Shell.CreateShortcut("C:\Users\Public\Desktop\Remote Desktop Connection.lnk")
 	    $Shortcut.TargetPath = "%windir%\system32\mstsc.exe"
@@ -1337,7 +1352,7 @@ Function Configure-BTRBaseImage {
     }
     
     If ($BaseImage.UpdateSource) {
-        "Configuring Updates"
+        Write-BTRLog "Configuring Updates" -Level Progress
         Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
             Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate" -Name "TargetGroup" -Value "SVDI" -Force -Confirm:$False *>&1 | Out-Null
             Set-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate" -Name "TargetGroupEnabled" -Value "1" -Force -Confirm:$False *>&1 | Out-Null
@@ -1347,25 +1362,27 @@ Function Configure-BTRBaseImage {
         }
     }
 
-    "Installing Windows Update Module"
+    Write-BTRLog "Installing Windows Update Module" -Level Progress
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Set-ExecutionPolicy Unrestricted -Force -Confirm:$False *>&1 | Out-Null
-        Install-PackageProvider -Name NuGet -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
-        Register-PSRepository -Default -InstallationPolicy Trusted -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
+        Install-PackageProvider -Name NuGet -Confirm:$False -Force -ErrorAction SilentlyContinue *>&1 | Out-Null
+        Register-PSRepository -Default -InstallationPolicy Trusted -ErrorAction SilentlyContinue *>&1 | Out-Null
+        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
         Install-Module -Name PSWindowsUpdate -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
         Import-Module -Name PSWindowsUpdate
     }
 
-    "Checking for updates"
+    Write-BTRLog "Checking for updates" -Level Progress
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Get-WindowsUpdate -Confirm:$False -ErrorAction SilentlyContinue  *>&1 | Out-Null
     }
 
-    "Installing updates"
+    Write-BTRLog  "Installing updates" -Level Progress
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
-        Install-WindowsUpdate -AcceptAll -AutoReboot
+        Install-WindowsUpdate -AcceptAll -AutoReboot *>&1 | Out-Null
     }
 
+    Return $True
 }
 
 Function Prep-BTRBaseImage {
@@ -1378,39 +1395,51 @@ Function Prep-BTRBaseImage {
     $VMName = $BaseImage.Name
     If (!(Hyper-V\Get-VM | Where Name -EQ $VMName)) {
         "$VMName does not exist"
-        Return
+        Return $False
     }
 
     #Figure out creditials
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
     $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminName,$SecurePassword)
 
-    #Machine Clean Up
+    Write-BTRLog "Optimizing .Net" -Level Progress
+    $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock { 
-        
-        If ($Using:BaseImage.OptimizeDotNet) {
-            "Optimizing .Net"
-	        Start-Process $Env:WINDIR\microsoft.net\framework64\v4.0.30319\ngen.exe -ArgumentList "executequeueditems /force" -Wait
-	        Start-Process $Env:WINDIR\microsoft.net\framework64\v4.0.30319\ngen.exe -ArgumentList "update /force" -Wait
-        }
-        
-        If ($Using:BaseImage.DisableAutoUpdates) {
-            "Disabling Auto Update"
-	        Stop-Service -Name BITS
-	        Stop-Service -Name wuauserv
-	        Set-Service -Name BITS -StartupType Disabled -ErrorAction SilentlyContinue
-	        Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
-            takeown /F C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator /A /R
-            icacls C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator /grant Administrators:F /T
-            Get-ScheduledTask -TaskPath "\Microsoft\Windows\UpdateOrchestrator\*" | Disable-ScheduledTask
-            Get-ScheduledTask -TaskPath "\Microsoft\Windows\WindowsUpdate\*" | Disable-ScheduledTask
-            Remove-Item C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator\* -Force -Confirm:$False -Recurse
-            REG ADD HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate /v WUServer /d https://localhost:8531 /t REG_SZ /f
-        }
+	    Start-Process $Env:WINDIR\microsoft.net\framework64\v4.0.30319\ngen.exe -ArgumentList "executequeueditems /force" -Wait
+	    Start-Process $Env:WINDIR\microsoft.net\framework64\v4.0.30319\ngen.exe -ArgumentList "update /force" -Wait
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to optimize .Net. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
 
+    Write-BTRLog "Disabling Auto Update" -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+	    Stop-Service -Name BITS
+	    Stop-Service -Name wuauserv
+	    Set-Service -Name BITS -StartupType Disabled -ErrorAction SilentlyContinue
+	    Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
+        takeown /F C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator /A /R
+        icacls C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator /grant Administrators:F /T
+        Get-ScheduledTask -TaskPath "\Microsoft\Windows\UpdateOrchestrator\*" | Disable-ScheduledTask
+        Get-ScheduledTask -TaskPath "\Microsoft\Windows\WindowsUpdate\*" | Disable-ScheduledTask
+        Remove-Item C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator\* -Force -Confirm:$False -Recurse
+        REG ADD HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate /v WUServer /d https://localhost:8531 /t REG_SZ /f
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to disable Auto updates. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
 
-        "Cleaning up junk"
-        Remove-Item "C:\Temp" -Force -Recurse -Confirm:$False -ErrorAction SilentlyContinue #2> $null
+    Write-BTRLog "Cleaning up junk" -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+        Remove-Item "C:\Temp" -Force -Recurse -Confirm:$False -ErrorAction SilentlyContinue 
         Remove-Item "C:\Windows\Temp\*" -Force -Recurse -Confirm:$False -ErrorAction SilentlyContinue
         Remove-Item "C:\Users\Administrator\Downloads\*" -Force -Recurse -Confirm:$False -ErrorAction SilentlyContinue
         Remove-Item "C:\Users\Administrator\Documents\*" -Force -Recurse -Confirm:$False -ErrorAction SilentlyContinue
@@ -1418,44 +1447,116 @@ Function Prep-BTRBaseImage {
         Remove-Item "C:\Windows\Prefetch\*" -Force -Recurse -Confirm:$False -ErrorAction SilentlyContinue
         Remove-Item "C:\Windows\Logs\*" -Force -Recurse -Confirm:$False -ErrorAction SilentlyContinue
         Remove-Item "C:\Windows\SoftwareDistribution\Download\*" -Force -Recurse -Confirm:$False -ErrorAction SilentlyContinue
-
-        #Empty Recycling Bin
         Clear-RecycleBin -Force -Confirm:$False
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to cleanup junk. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
 
-
-	    "Deleting shadow copies"
+    Write-BTRLog "Deleting shadow copies" -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
 	    Set-Service VSS -StartupType Manual
 	    Start-Service VSS
 	    Start-Process VSSAdmin.exe -ArgumentList "Delete Shadows /All /Quiet" -Wait
 	    Stop-Service VSS
 	    Set-Service VSS -StartupType Disabled
-        
-        "Purging all event logs"
-	    Get-WinEvent -ListLog * -Force -ErrorAction SilentlyContinue | % { Wevtutil.exe cl $_.logname } 2> .\%LOCALAPPDATA%
-        
-        "Defraging C:"
-	    Optimize-Volume -DriveLetter C -Defrag
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to delete shadow copies. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
 
-        "Running Sysprep"
-        C:\Windows\System32\Sysprep\sysprep.exe /oobe /generalize /mode:vm /shutdown /quiet
+    Write-BTRLog "Purging all event logs" -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+	    Get-WinEvent -ListLog * -Force -ErrorAction SilentlyContinue | % { Wevtutil.exe cl $_.logname } 2> .\%LOCALAPPDATA% 
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to purge event logs. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
+
+    Write-BTRLog "Defrag C:" -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+	    Optimize-Volume -DriveLetter C -Defrag -ErrorAction SilentlyContinue
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to defrag C:. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
+
+    Write-BTRLog "Running Sysprep" -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+        Start-Process "C:\Windows\System32\Sysprep\sysprep.exe" -ArgumentList "/oobe /generalize /mode:vm /shutdown /quiet" -Wait -ErrorAction SilentlyContinue
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to start sysprep. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
     }
     
     #Delete VM and leave disk
-    "Waiting for VM to shutdown"
+    Write-BTRLog "Waiting for VM to shutdown" -Level Progress
     $VM = Hyper-V\Get-VM -VMName $VMName
     Do {
         Start-Sleep 5
     } Until ($VM.State -eq "Off")
-    "Deleting VM"
-    Hyper-V\Remove-VM -Name $VMName -Force -Confirm:$False
-    "Optimizing vhd"
-    Optimize-VHD -Path $BaseImage.BaseImage -Mode Full
-    "Setting vhd to Read Only"
-    Set-ItemProperty -Path $BaseImage.BaseImage -Name IsReadOnly -Value $True
 
-    #Deleting $($BaseImage.CustomISO)
-    "Deleting Install ISO"
-    Remove-Item $BaseImage.CustomISO -Force -Confirm:$False
+    Write-BTRLog "Deleting VM $VMName" -Level Progress
+    $Error.Clear()
+    Hyper-V\Remove-VM -Name $VMName -Force -Confirm:$False
+    If ($Error) {
+        Write-BTRLog "Failed to delete VM. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
+
+    Write-BTRLog "Optimizing vhd $($BaseImage.BaseImage)" -Level Progress
+    $Error.Clear()
+    Optimize-VHD -Path $BaseImage.BaseImage -Mode Full
+    If ($Error) {
+        Write-BTRLog "Failed to optimize vhd. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
+
+    Write-BTRLog "Setting vhd $($BaseImage.BaseImage) to Read Only" -Level Progress
+    $Error.Clear()
+    Set-ItemProperty -Path $BaseImage.BaseImage -Name IsReadOnly -Value $True -ErrorAction SilentlyContinue
+    If ($Error) {
+        Write-BTRLog "Failed to set vhd to Read Only. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
+
+
+    Write-BTRLog "Deleting Install ISO $($BaseImage.CustomISO)" -Level Progress
+    $Error.Clear()
+    Remove-Item $BaseImage.CustomISO -Force -Confirm:$False -ErrorAction SilentlyContinue
+    If ($Error) {
+        Write-BTRLog "Failed to delete install ISO. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
+
+    Return $True
 }
 
 Function Install-BTRDomain {
