@@ -217,28 +217,80 @@ Function Wait-BTRVMOnline {
     Param (
         [Parameter(Mandatory=$True)][String]$VMName,
         [Parameter(Mandatory=$True)]$Instance,
-        [int64]$MaxWaitTime = 600,
-        [int64]$Interval = 1
+        [int64]$MaxWaitTime = 5,
+        [int64]$RetryEvery = 10
     )
 
     #Figure out credentials
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-    $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
 
     #Make sure VM Exists and is on
     If (!(Hyper-V\Get-VM -Name $VMName)) {
         Read-Host "$VMName does not exist"
-        Return 1
+        Return $False
     }
 
-    $StartTime = Get-Date
+    Write-BTRLog "Connecting to $VMName with max wait time $MaxWaitTime minutes." -Level Debug
+    $GiveUpAt = (Get-Date).AddMinutes($MaxWaitTime)
+    Write-BTRLog "Will give up at $GiveUpAt." -Level Debug
     Do {
-        If (($(Get-Date) - $StartTime).TotalSeconds -ge $MaxWaitTime) {
-            Return 2
+        $Error.Clear()
+        $Test = Invoke-Command -VMName $VMName -Credential $LocalCreds -ErrorAction SilentlyContinue -ScriptBlock {Get-Verb}
+        If ($Error) {
+		    Write-BTRLog "Failed to connect to $VMName with PSRemoting. Error: $($Error[0].Exception.Message)." -Level Debug
+            Write-BTRLog "Will try again in $RetryEvery seconds. " -Level Debug
+            If ($(Get-Date) -ge $GiveUpAt) {
+                Write-BTRLog "We've waited $MaxWaitTime minutes and not connected to $VMName.  Dying..." -Level Error
+                Return $False
+            }Else{
+                $Error.Clear()
+                Start-Sleep -Seconds $RetryEvery
+            }
+	    }Else{  
+            Write-BTRLog "Connected to $HostName with PSRemoting" -Level Progress
+            Return $True
         }
-        Start-Sleep $Interval
-    }Until (Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {$Temp = Get-ChildItem C:\ } -ErrorAction SilentlyContinue )
-    Return $False
+    } Until ($Test)
+}
+
+Function Wait-BTRVMOffline {
+    Param (
+        [Parameter(Mandatory=$True)][String]$VMName,
+        [Parameter(Mandatory=$True)]$Instance,
+        [int64]$MaxWaitTime = 10,
+        [int64]$RetryEvery = 3
+    )
+
+    #Figure out credentials
+    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+
+    #Make sure VM Exists and is on
+    If (!(Hyper-V\Get-VM -Name $VMName)) {
+        Read-Host "$VMName does not exist"
+        Return $False
+    }
+
+    Write-BTRLog "Waiting for $VMName to go offline with max wait time $MaxWaitTime minutes." -Level Debug
+    $GiveUpAt = (Get-Date).AddMinutes($MaxWaitTime)
+    Write-BTRLog "Will give up at $GiveUpAt." -Level Debug
+    Do {
+        $Error.Clear()
+        $Test = Invoke-Command -VMName $VMName -Credential $LocalCreds -ErrorAction SilentlyContinue -ScriptBlock {Get-Verb}
+        If ($Error) {
+            Write-BTRLog "$VMName is now offline" -Level Debug
+            Return $True
+	    }Else{  
+            If ($(Get-Date) -ge $GiveUpAt) {
+                Write-BTRLog "We've waited $MaxWaitTime minutes and $VMName is still online." -Level Error
+                Return $False
+            }Else{
+                $Error.Clear()
+                Start-Sleep -Seconds $RetryEvery
+            }
+        }
+    } Until ($Error)
 }
 
 Function Install-BTRSofware {
@@ -493,7 +545,6 @@ Function Configure-BTRServer {
 
     Return $True
 }
-
 
 Function Configure-BTRInstance {
     Param (
@@ -1082,28 +1133,6 @@ Function Configure-BTRBaseImage {
         Return $False
     }
 
-    #Wait for VM to finish install
-    $MaxWaitTime = 10
-    $RetryEvery = 15
-    Write-BTRLog "Connecting to $VMName with max wait time $MaxWaitTime minutes." -Level Progress
-    $GiveUpAt = (Get-Date).AddMinutes($MaxWaitTime)
-    Do {
-        $Test = Invoke-Command -VMName $VMName -Credential $LocalCreds -ErrorAction SilentlyContinue -ScriptBlock {Get-Verb}
-        If ($Error) {
-		    Write-BTRLog "Failed to connect to $VMName with PSRemoting. Error: $($Error[0].Exception.Message)." -Level Debug
-            Write-BTRLog "Will try again in $RetryEvery seconds. " -Level Debug
-            If ($(Get-Date) -ge $GiveUpAt) {
-                Write-BTRLog "We've waited $MaxWaitTime minutes and not connected to $VMName.  Dying..." -Level Error
-                Return $False
-            }Else{
-                $Error.Clear()
-                Start-Sleep -Seconds $RetryEvery
-            }
-	    }Else{
-            Write-BTRLog "Connected to $HostName with PSRemoting" -Level Progress
-        }
-    } Until ($Test)
-
     Write-BTRLog "Checking if base image is set to use static IP" -Level Debug
     If (!($BaseImage.UseDHCP)) {
         Write-BTRLog "Base image is set to use static IP" -Level Debug
@@ -1418,16 +1447,16 @@ Function Prep-BTRBaseImage {
     Write-BTRLog "Disabling Auto Update" -Level Progress
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
-	    Stop-Service -Name BITS
-	    Stop-Service -Name wuauserv
+	    Stop-Service -Name BITS -ErrorAction SilentlyContinue
+	    Stop-Service -Name wuauserv -ErrorAction SilentlyContinue
 	    Set-Service -Name BITS -StartupType Disabled -ErrorAction SilentlyContinue
 	    Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
-        takeown /F C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator /A /R
-        icacls C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator /grant Administrators:F /T
-        Get-ScheduledTask -TaskPath "\Microsoft\Windows\UpdateOrchestrator\*" | Disable-ScheduledTask
-        Get-ScheduledTask -TaskPath "\Microsoft\Windows\WindowsUpdate\*" | Disable-ScheduledTask
-        Remove-Item C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator\* -Force -Confirm:$False -Recurse
-        REG ADD HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate /v WUServer /d https://localhost:8531 /t REG_SZ /f
+        takeown /F C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator /A /R *>&1 | Out-Null
+        icacls C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator /grant Administrators:F /T *>&1 | Out-Null
+        Get-ScheduledTask -TaskPath "\Microsoft\Windows\UpdateOrchestrator\*" | Disable-ScheduledTask -ErrorAction SilentlyContinue *>&1 | Out-Null
+        Get-ScheduledTask -TaskPath "\Microsoft\Windows\WindowsUpdate\*" | Disable-ScheduledTask -ErrorAction SilentlyContinue *>&1 | Out-Null
+        Remove-Item C:\Windows\System32\Tasks\Microsoft\Windows\UpdateOrchestrator\* -Force -Confirm:$False -Recurse -ErrorAction SilentlyContinue
+        REG ADD HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate /v WUServer /d https://localhost:8531 /t REG_SZ /f *>&1 | Out-Null
     }
     If ($Error) {
         Write-BTRLog "Failed to disable Auto updates. Error: $($Error[0].Exception.Message)" -Level Error
@@ -1567,27 +1596,32 @@ Function Install-BTRDomain {
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
     $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
 
-    #Install Domain role
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
+    Write-BTRLog "Installing Domain Controller role on $($Instance.DomainController)" -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         Install-WindowsFeature -Name AD-Domain-Services -IncludeAllSubFeature -IncludeManagementTools -Confirm:$False -ErrorAction SilentlyContinue
     }
-    If ($IsBroken) {
-        "Unable to install Domain role"
-        Read-Host "Hit Enter to exit"
-        Return
+    If ($Error) {
+        Write-BTRLog "Failed to install Domain Controller role on $($Instance.DomainController). Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
 
-    #Configure Domain
+    Write-BTRLog "Creating Domain $($Instance.DomainName) on $($Instance.DomainController)" -Level Progress
     $Error.Clear()
     Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         $SecurePassword = ConvertTo-SecureString -AsPlainText $Using:Instance.AdminPassword -Force
         Install-ADDSForest -DomainMode 7 -ForestMode 7 -InstallDNS -Force -DomainName $Using:Instance.DomainName -SafeModeAdministratorPassword $SecurePassword -DomainNetbiosName $Using:Instance.NBDomainName -ErrorAction SilentlyContinue
     }
     If ($Error) {
-        "Unable to create domain"
-        Read-Host "Hit Enter to exit"
-        Return
+        Write-BTRLog "Failed to create $($Instance.DomainName). Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
+
+    Return $True
 }
 
 Function Configure-BTRDomain {
@@ -1599,61 +1633,94 @@ Function Configure-BTRDomain {
     $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
 
     $DNSServers = Get-DnsClientServerAddress | Where AddressFamily -eq 2 | Where ServerAddresses | Select -First 1 | Select -ExpandProperty ServerAddresses
+    $DC = $Instance.DomainController
+
+    #Set NIC to register in DNS
+    Write-BTRLog "Setting NIC on $DC to register in DNS." -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+        $NICs = Get-WmiObject "Win32_NetworkAdapterConfiguration where IPEnabled='TRUE'"
+        ForEach ($Nic In $Nics) {
+            $Nic.SetDynamicDNSRegistration($true) *>&1 | Out-Null
+        }
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to set NIC to register in DNS. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
 
     #Create Reverse Lookup Zone
+    Write-BTRLog "Creating reverse lookup zone on $DC." -Level Progress
     $NetworkID = "$($Instance.IPPrefix).0/$($Instance.SubnetLength)"
     $Octets = $Instance.IPPrefix -split "\."
     $ZoneName = $Octets[2] + "." + $Octets[1] + "." + $Octets[0] + ".in-addr.arpa"
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
+    Write-BTRLog "Zone name: $ZoneName." -Level Debug
+    Write-BTRLog "Network ID: $NetworkID." -Level Debug
+    $Error.Clear()
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         If (!(Get-DnsServerZone | Where ZoneName -like $Using:ZoneName)) {
-            Add-DNSServerPrimaryZone -NetworkID $Using:NetworkID -ReplicationScope Forest -DynamicUpdate Secure  -Confirm:$False
+            Add-DNSServerPrimaryZone -NetworkID $Using:NetworkID -ReplicationScope Forest -DynamicUpdate Secure  -Confirm:$False -ErrorAction SilentlyContinue
         }
     }
-    If ($IsBroken) {
-        "Unable to create reverse lookup zone"
-        Read-Host "Hit Enter to exit"
-        Return
+    If ($Error) {
+        Write-BTRLog "Failed to create reverse lookup zone. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
 
     #Setup Forwarders
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
-        Set-DnsServerForwarder -UseRootHint $False -IPAddress $Using:DNSServers -EnableReordering $True -Confirm:$False
+    Write-BTRLog "Setting DNS forwarders on $DC." -Level Progress
+    Write-BTRLog "Forwarders are: $DNSServers" -Level Debug
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+        Set-DnsServerForwarder -UseRootHint $False -IPAddress $Using:DNSServers -EnableReordering $True -Confirm:$False -ErrorAction SilentlyContinue
     }
-    If ($IsBroken) {
-        "Unable to set DNS forwarders"
-        Read-Host "Hit Enter to exit"
-        Return
+    If ($Error) {
+        Write-BTRLog "Failed to set DNS forwarders. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
 
     #Remove root hints
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
-        Get-DnsServerRootHint | Remove-DnsServerRootHint -Confirm: $False -Force
+    Write-BTRLog "Removing root hints from $DC." -Level Progress
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+        Get-DnsServerRootHint | Remove-DnsServerRootHint -Confirm: $False -Force -ErrorAction SilentlyContinue
     }
-    If ($IsBroken) {
-        "Unable to remove root hints"
-        Read-Host "Hit Enter to exit"
-        Return
+    If ($Error) {
+        Write-BTRLog "Failed to remove root hints. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
 
     #Set Aging/Scavanging
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
-        Set-DnsServerScavenging -ScavengingState $True -RefreshInterval 7.00:00:00 -NoRefreshInterval 7.00:00:00 -ApplyOnAllZones
+    Write-BTRLog "Setting Aging/Scavanging on all zones." -Level Progress
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+        Set-DnsServerScavenging -ScavengingState $True -RefreshInterval 7.00:00:00 -NoRefreshInterval 7.00:00:00 -ApplyOnAllZones -ErrorAction SilentlyContinue
     }
-    If ($IsBroken) {
-        "Unable to set scavanging"
-        Read-Host "Hit Enter to exit"
-        Return
+    If ($Error) {
+        Write-BTRLog "Failed to set Aging/Scavanging on all zones. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
 
     #Register DC in Reverse lookup zone
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
-        IPConfig /registerDNS
+    Write-BTRLog "Registering $DC in reverse Zone." -Level Progress
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+        IPConfig /registerDNS *>&1 | Out-Null
     }
-    If ($IsBroken) {
-        "Unable to register DC in DNS"
-        Read-Host "Hit Enter to exit"
-        Return
+    If ($Error) {
+        Write-BTRLog "Failed to register DC in reverse zone. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
+
+    Return $True
 }
 
 Function SetUp-BTRDHCPServer {
@@ -1664,50 +1731,63 @@ Function SetUp-BTRDHCPServer {
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
     $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
 
+    $DC = $Instance.DomainController
+
     #Install DHCP role
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
+    Write-BTRLog "Installing DHCP Role on $DC." -Level Progress
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         Install-WindowsFeature -Name DHCP -IncludeAllSubFeature -IncludeManagementTools -Confirm:$False
     }
-    If ($IsBroken) {
-        "Unable to install DHCP role"
-        Read-Host "Hit Enter to exit"
-        Return
+    If ($Error) {
+        Write-BTRLog "Failed to install DHCP role. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
 
     #Authorize DHCP in Domain
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
+    Write-BTRLog "Authorizing $DC for DHCP in AD." -Level Progress
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         Add-DhcpServerInDC -DNSName $Using:Instance.DomainController -IPAddress $Using:Instance.DomainControllerIP
     }
-    If ($IsBroken) {
-        "Unable to Authorize DHCP in Domain"
-        Read-Host "Hit Enter to exit"
-        Return
+    If ($Error) {
+        Write-BTRLog "Failed to autorize $DC for DHCP. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
 
     #Configure IPv4 options
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
+    Write-BTRLog "Connfiguring IPv4 options." -Level Progress
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         Set-DhcpServerSetting -ConflictDetectionAttempts 1
         Set-DhcpServerv4DnsSetting -DynamicUpdates "Always" -DeleteDnsRRonLeaseExpiry $True
     }
-    If ($IsBroken) {
-        "Unable to configure IPv4 options in DHCP"
-        Read-Host "Hit Enter to exit"
-        Return
+    If ($Error) {
+        Write-BTRLog "Failed to set DHCP options. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
 
     #Create Scope
+    Write-BTRLog "Creating IPv4 DHCP scope." -Level Progress
     $Start = $Instance.IPPrefix + "." + $Instance.DHCPStart
     $End = $Instance.IPPrefix + "." + $Instance.DHCPStop
     $ScopeID = $Instance.IPPrefix + ".0"
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ErrorVariable $IsBroken -ScriptBlock {
+    Write-BTRLog "Scope ID: $ScopeID.  from $Start to $Stop" -Level Debug
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         Add-DhcpServerv4Scope -Name $Using:Instance.Name -StartRange $Using:Start -EndRange $Using:End -SubnetMask $Using:Instance.SubnetMask -State Active -LeaseDuration "1.0:00:00" 
         Set-DhcpServerv4OptionValue -ScopeId $Using:ScopeID -DNSServer $Using:Instance.DomainControllerIP -DNSDomain $Using:Instance.DomainName -Router $Using:Instance.Gateway
     }
-    If ($IsBroken) {
-        "Unable to configure IPv4 options in DHCP"
-        Read-Host "Hit Enter to exit"
-        Return
+    If ($Error) {
+        Write-BTRLog "Failed to create DHCP scope. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
+
+    Return $True
 }
 
 
@@ -1733,76 +1813,86 @@ Function New-BTRVMFromTemplate {
     $HDDName = "$($Instance.HDDPath)\$VMName-C.vhdx"
 
     If (!(Test-Path $BaseImage.BaseImage)) {
-        "Base Image $($BaseImage.BaseImage) does not exist!"
-        Read-Host "Hit Enter to exit"
-        Return
+        Write-BTRLog "Base Image $($BaseImage.BaseImage) does not exist!" -Level Error
+        Return $False
     }
 
     If (Test-Path $HDDName) {
-        "$HDDName already exists!"
-        Read-Host "Hit Enter to exit"
-        Return
+        Write-BTRLog "$HDDName already exists!" -Level Error
+        Return $False
     }
 
-    "Cloning $($BaseImage.BaseImage) to $HDDName"
+    Write-BTRLog "Cloning $($BaseImage.BaseImage) to $HDDName" -Level Progress
     $Error.Clear()
-    $HDD = Hyper-V\New-VHD -ComputerName $Instance.Host -ParentPath $BaseImage.BaseImage -Path $HDDName -Differencing
+    $HDD = Hyper-V\New-VHD -ParentPath $BaseImage.BaseImage -Path $HDDName -Differencing
     If ($Error) {
-        "Unable to create HDD"
-        Read-Host "Hit Enter to exit"
-        Return
+        Write-BTRLog "Unable to create clone of HDD. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
     
+    Write-BTRLog "Creating VM $VMName" -Level Progress
     $Error.Clear()
-    "Creating VM $VMName"
-    $VM = Hyper-V\New-VM -Name $VMName -ComputerName $Instance.Host -Generation 2 -VHDPath $HDDName -Path $Instance.VMPath
+    $VM = Hyper-V\New-VM -Name $VMName -Generation 2 -VHDPath $HDDName -Path $Instance.VMPath
     If ($Error) {
-        "Unable to create VM"
-        Read-Host "Hit Enter to exit"
-        Return
+        Write-BTRLog "Failed to create VM. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
     
-    "Configuring $VMName"
-    Hyper-V\Set-VM -Name $VMName -ComputerName $Instance.Host -ProcessorCount $CPUCount -AutomaticCheckpointsEnabled:$False -CheckpointType Production -Confirm:$False -SnapshotFileLocation $Instance.SnapShotPath
-    Hyper-V\Set-VMMemory -VMName $VMName -ComputerName $Instance.Host -DynamicMemoryEnabled $True -MinimumBytes $Memory
-    Hyper-V\Connect-VMNetworkAdapter -VMName $VMName -ComputerName $Instance.Host -SwitchName $Instance.SwitchName
-    Hyper-V\Enable-VMIntegrationService -VMName $VMName -ComputerName $Instance.Host -Name "Guest Service Interface"
-    Hyper-V\Set-VMFirmware -VMName $VMName -ComputerName $Instance.Host -EnableSecureBoot Off
+    Write-BTRLog "Configuring $VMName" -Level Progress
+    $Error.Clear()
+    Hyper-V\Set-VM -Name $VMName -ProcessorCount $CPUCount -AutomaticCheckpointsEnabled:$False -CheckpointType Production -Confirm:$False -SnapshotFileLocation $Instance.SnapShotPath
+    Hyper-V\Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $True -MinimumBytes $Memory
+    Hyper-V\Connect-VMNetworkAdapter -VMName $VMName -SwitchName $Instance.SwitchName
+    Hyper-V\Enable-VMIntegrationService -VMName $VMName -Name "Guest Service Interface"
+    Hyper-V\Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
+    If ($Error) {
+        Write-BTRLog "Failed to configure VM. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
 
-    Write-BTRLog "Powering ON $VMName. This is required to get a MAC address assigned." -Level Debug
+    Write-BTRLog "Powering ON $VMName. This is required to get a MAC address assigned." -Level Progress
     $Error.Clear()
     Hyper-V\Start-VM -Name $VMName -ErrorAction SilentlyContinue
     If ($Error) {
         Write-BTRLog "Unable to power on $VMName. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     } Else {
-        Write-BTRLog "Powered on $VMName." -Level Debug
+        Write-BTRLog "     Success!" -Level Debug
     }
 
-    Write-BTRLog "Waiting 3 seconds." -Level Debug
+    Write-BTRLog "Waiting 3 seconds to get a MAC address." -Level Progress
     Start-Sleep -Seconds 3
 
-    Write-BTRLog "Powering OFF $VMName." -Level Debug
+    Write-BTRLog "Powering OFF $VMName." -Level Progress
     $Error.Clear()
     Hyper-V\Stop-VM -Name $VMName -TurnOff -Force -Confirm:$False -ErrorAction SilentlyContinue
     If ($Error) {
         Write-BTRLog "Unable to power off $VMName. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     } Else {
-        Write-BTRLog "Powered off $VMName." -Level Debug
+        Write-BTRLog "     Success!" -Level Debug
     }
 
-    Write-BTRLog "Verifying that MAC address got assigned" -Level Debug
+    Write-BTRLog "Verifying that MAC address got assigned" -Level Progress
+    $Error.Clear()
     $Mac = Hyper-V\Get-VMNetworkAdapter -VMName $VMName -ErrorAction SilentlyContinue | Select -ExpandProperty MACAddress
     If ($Error) {
         Write-BTRLog "Unable to find Mac Address for $VMName." -Level Error
-        Return
+        Return $False
     }ElseIf (!($Mac -match '^([0-9A-Fa-f]{12})$')) {
         Write-BTRLog "Unable to find Mac Address for $VMName." -Level Error
-        Return
+        Return $False
     Else
-        Write-BTRLog "MAc address for $VMName is $Mac" -Level Debug
+        Write-BTRLog "     MAc address for $VMName is $Mac" -Level Debug
     }
+
+    Return $True
 }
     
 Function Delete-BTRVM {
@@ -1985,25 +2075,27 @@ Function Apply-BTRVMCustomConfig {
         [Bool]$JoinDomain = $True
     )
 
-    $MacAddress = $(Hyper-V\Get-VMNetworkAdapter -VMName $VMname -ComputerName $Instance.Host | Select -ExpandProperty MACAddress) -replace "([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])", '$1$2-$3$4-$5$6-$7$8-$9$10-$11$12'
-    If ($MacAddress.Length -ne 17) {
-        "Unable to retrive Mac address"
-        Read-Host "Hit Enter to exit"
-        Return
+    $MacAddress = $(Hyper-V\Get-VMNetworkAdapter -VMName $VMname | Select -ExpandProperty MACAddress) -replace "([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])", '$1$2-$3$4-$5$6-$7$8-$9$10-$11$12'
+    If ($MacAddress.Length -ne 17 -or $MacAddress -eq "00-00-00-00-00-00") {
+        Write-BTRLog "Unable to retrive Mac address" -Level Error
+        Return $false
+    }Else{
+        Write-BTRLog "Mac address for $VMName is $MacAddress." -Level Debug
     }
 
     $HDDName = "$($Instance.HDDPath)\$VMName-C.vhdx"
 
-    "Mounting $HDDName"
+    Write-BTRLog "Mounting $HDDName" -Level Debug
     $Error.Clear()
-    $DriveLetter = Mount-VHD -Path $HDDName -Passthru | Get-Partition | Where DriveLetter | Select -ExpandProperty DriveLetter
+    $DriveLetter = Mount-VHD -Path $HDDName -Passthru -ErrorAction SilentlyContinue | Get-Partition -ErrorAction SilentlyContinue | Where DriveLetter -ErrorAction SilentlyContinue | Select -ExpandProperty DriveLetter
     If ($Error) {
-        "Unable to mount $HDDName"
-        Read-Host "Hit Enter to exit"
-        Return
+        Write-BTRLog "Unable to mount $HDDName. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $false
+    }Else{
+        Write-BTRLog "     Sucess!" -Level Debug
     }
 
-    "Writing config file for $VMName"
+    Write-BTRLog "Writing config file for $VMName" -Level Debug
     $ConfigFile = $DriveLetter + ":\Windows\Panther\unattend.xml"
 
     $FileContent = '
@@ -2123,34 +2215,59 @@ Function Apply-BTRVMCustomConfig {
     
     $FileContent > $ConfigFile
     
-    "Dismounting $HDDName"
+    Write-BTRLog "Dismounting $HDDName" -Level Progress
     $Error.Clear()
-    Dismount-VHD -Path $HDDName
+    Dismount-VHD -Path $HDDName -ErrorAction SilentlyContinue
     If ($Error) {
-        "Unable to dismount $HDDName"
-        Read-Host "Hit Enter to exit"
-        Return
+        Write-BTRLog "Unable to dismount $HDDName. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $false
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
     }
+
+    Return $True
 }
 
 Function Tweak-BTRVMPostDeloy {
     Param (
         [Parameter(Mandatory=$True)]$Instance,
-        [Parameter(Mandatory=$True)][String]$VMName
+        [Parameter(Mandatory=$True)][String]$VMName,
+        [Switch]$UseDomainCreds
     )
 
-    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-    $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    If ($UseDomainCreds) {
+        $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+        $Creds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    }Else{
+        $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+        $Creds = New-Object -TypeName System.Management.Automation.PSCredential("$VMName\$($Instance.AdminName)",$SecurePassword)
+    }
 
-    #Disable IPv6
-    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock { 
+    Write-BTRLog "Disabling IPv6" -Level Debug
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $Creds -ScriptBlock { 
         Get-NetAdapter | foreach { Disable-NetAdapterBinding -InterfaceAlias $_.Name -ComponentID ms_tcpip6 }
     }
+    If ($Error) {
+        Write-BTRLog "Failed to disable IPv6. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $false
+    }Else{
+        Write-BTRLog "     Sucess!" -Level Debug
+    } 
 
-    #Disable Server Manager
-    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+    Write-BTRLog "Disabling Server Manager" -Level Debug
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $Creds -ScriptBlock {
         Get-ScheduledTask -TaskName ServerManager | Disable-ScheduledTask
     }
+    If ($Error) {
+        Write-BTRLog "Failed to disable Server Manager. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $false
+    }Else{
+        Write-BTRLog "     Sucess!" -Level Debug
+    }
+
+    Return $True
 }
 
 Function Install-BTRExchange {

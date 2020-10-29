@@ -578,7 +578,6 @@ If ($BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage) {
         Write-BTRLog "You must configure a base image to continue" -Level Error
         Return
     }
-
 }
 
 
@@ -586,7 +585,7 @@ If ($BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage) {
 $DefaultInstance = $BeaterConfig.Instances[$BeaterConfig.DefaultInstance]
 $BaseImage = $BeaterConfig.BaseImages[$BeaterConfig.Instances[$BeaterConfig.DefaultInstance].DefaultBaseImage]
 If (Test-Path -Path $BaseImage.BaseImage) {
-    Write-Brtlog "Default base image exists at $($BaseImage.BaseImage)" -Level Debug
+    Write-BTRLog "Default base image exists at $($BaseImage.BaseImage)" -Level Debug
 }Else{
     #Create ISO
     If ((Read-Host "Default base image install media does not exist.  Would you like to create an installer? (Y/N)") -eq 'N') {
@@ -613,39 +612,45 @@ If (Test-Path -Path $BaseImage.BaseImage) {
         If (Create-BTRBaseVM -Instance $DefaultInstance -BaseImage $BaseImage) {
             Write-BTRLog "Base vm created. Waiting 5 seconds for VM to stabilize." -Level Progress
             Start-Sleep -Seconds 5
-            Write-BTRLog "Starting VM"
+            Write-BTRLog "Starting VM" -Level Progress
             $Error.Clear()
             Hyper-V\Start-VM -VMName $BaseImage.Name -ErrorAction SilentlyContinue
             If ($Error) {
                 Write-BTRLog "Unable to start VM $($BaseImage.Name). Error: $($Error[0].Exception.Message)." -Level Error
                 Return
             }Else{
-                Write-BTRLog "Started VM $($BaseImage.Name)." -Level Progress
+                Write-BTRLog "   Success" -Level Debug
             }
 
             #Wait for VM to come online
-            Write-BTRLog "Waiting 3 minutes for VM deploy to finsh" -Level Progress
-            Start-Sleep -Seconds 180
+            If (!(Wait-BTRVMOnline -Instance $DefaultInstance -VMName $BaseImage.Name)) {
+                Write-BTRLog "$($BaseImage.Name) never came online" -Level Error
+                Return
+            }
 
             #Configure Base VM
+            Write-BTRLog "Configuring base image" -Level Progress
             If (Configure-BTRBaseImage -Instance $DefaultInstance -BaseImage $BaseImage) {
-                Write-BTRLog "Configured base image" -Level Progress
-                #Waiting for reboot
-                $WaitForSeconds = 5
-                $MaxTries = 600
-                $VM = Get-VM -Name $BaseImage.Name
-                For ($Tries = 0; $Tries -le $MaxTries; $Tries++) {
-                    If ($VM.OperationalStatus -ne 'Ok') {
-                        "VM rebooting"
-                        Break
-                    }Else{
-                        Start-Sleep $WaitForSeconds
-                    }
+                Write-BTRLog "Configured base image" -Level Progress                
+               
+                Write-BTRLog "Waiting for updates to finish and VM to reboot" -Level Progress
+                If (!(Wait-BTRVMOffline -Instance $DefaultInstance -VMName $BaseImage.Name)) {
+                    Write-BTRLog "$($BaseImage.Name) isn't shutting down." -Level Error
+                    Return
                 }
+
+                Write-BTRLog "Waiting for vm to finish reboot" -Level Progress
+                If (!(Wait-BTRVMOnline -Instance $DefaultInstance -VMName $BaseImage.Name)) {
+                    Write-BTRLog "$($BaseImage.Name) isn't comming up." -Level Error
+                    Return
+                } 
+               
+                #Prep Base image
+                Write-BtrLog "Prepping base image" -level Progress
                 If (Prep-BTRBaseImage -Instance $DefaultInstance -BaseImage $BaseImage) {
-                    #Write-BTRLog "Prepped base image" -Level Progress
+                    Write-BTRLog "Prepped base image" -Level Progress
                 }Else{
-                    Write-BTRLog "Failed to prep base image" -Level Debug
+                    Write-BTRLog "Failed to prep base image" -Level Error
                     Return
                 }
             }Else{
@@ -656,11 +661,82 @@ If (Test-Path -Path $BaseImage.BaseImage) {
             Write-BTRLog "Failed to create base image" -Level Debug
             Return
         }
+    }
 }
-
-
 #endregion
-        
+
+
+#region BuildDomain     
 #Build Domain
+If (Hyper-V\Get-VM -ErrorAction SilentlyContinue | Where Name -like $DefaultInstance.DomainController) {
+    Write-BTRLog "Domain Controller for default instance exists." -Level Progress
+}Else{
+    $VMName = $DefaultInstance.DomainController
+    If((Read-Host "You default instance lacks a domain controller.  Do you want to create it now? (Y/N)") -ne 'Y') {
+        Write-BTRLog "You must have a DC to continue" -Level Error
+        Return
+    }
+
+    Write-BTRLog "Creating $VMName" -Level Progress
+    If (!(New-BTRVMFromTemplate -Instance $DefaultInstance -VmName $VMName -BaseImage $BaseImage)) {
+        Write-BTRLog "Failed to make VM for DC" -Level Error
+        Return
+    }
+
+    Write-BTRLog "Writing Config to $VMName" -Level Progress
+    If (!(Apply-BTRVMCustomConfig -VMName $VMName -Instance $DefaultInstance -IpAddress $DefaultInstance.DomainControllerIP -JoinDomain $False -BaseImage $BaseImage)) {
+        Write-BTRLog "Failed to apply custom config to DC" -Level Error
+        Return
+    }
+
+    Write-BTRLog "Staring $VMName" -Level Progress
+    $Error.Clear()
+    Hyper-V\Start-VM -VMName $VMName -ErrorAction SilentlyContinue
+    If ($Error) {
+        Write-BTRLog "Failed to power on DC" -Level Error
+        Return
+    }
+
+    Write-BTRLog "Waiting for $VMName to finish building." -Level Progress
+    If (!(Wait-BTRVMOnline -VMName $VMName -Instance $DefaultInstance)) {
+        Write-BTRLog "DC never came online" -Level Error
+        Return
+    }
+
+    Write-BTRLog "Doing post deploy tweaks on $VMName" -Level Progress
+    If (!(Tweak-BTRVMPostDeloy -VMName $VMName -Instance $DefaultInstance)) {
+        Write-BTRLog "Failed to apply post deploy tweaks." -Level Error
+        Return
+    }
+
+    Write-BTRLog "Installing DC role on  $VMName." -Level Progress
+    If (!(Install-BTRDomain -Instance $DefaultInstance)) {
+        Write-BTRLog "Unable to isntall domain role." -Level Error
+        Return
+    }
+           
+    Write-BTRLog "Waiting for $VMName to reboot" -Level Progress
+    If (!(Wait-BTRVMOffline -Instance $DefaultInstance -VMName $VMName)) {
+        Write-BTRLog "$VMName isn't rebooting." -Level Error
+        Return
+    }
+    If (!(Wait-BTRVMOnline -Instance $DefaultInstance -VMName $VMName)) {
+        Write-BTRLog "$VMName isn't rebooting." -Level Error
+        Return
+    }
+
+    Write-BTRLog "Configuring domain" -Level Progress
+    If (!(Configure-BTRDomain -Instance $DefaultInstance)) {
+        Write-BTRLog "Failed to configure domain on $VMName" -Level Error
+        Return
+    }
+
+    Write-BTRLog "Configuring DHCP" -Level Progress
+    If (!(SetUp-BTRDHCPServer -Instance $DefaultInstance)) {
+        Write-BTRLog "Failed to configure domain on $VMName" -Level Error
+        Return
+    }    
+}
+#endregion
 
 #Main menu
