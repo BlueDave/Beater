@@ -1735,6 +1735,7 @@ Function SetUp-BTRDHCPServer {
 
     #Install DHCP role
     Write-BTRLog "Installing DHCP Role on $DC." -Level Progress
+    $Error.Clear()
     Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         Install-WindowsFeature -Name DHCP -IncludeAllSubFeature -IncludeManagementTools -Confirm:$False
     }
@@ -1745,8 +1746,12 @@ Function SetUp-BTRDHCPServer {
         Write-BTRLog "     Success!" -Level Debug
     }
 
+    Write-BTRLog "Waiting for DHCP install to finalize." -Level Progress
+    Start-Sleep 5
+
     #Authorize DHCP in Domain
     Write-BTRLog "Authorizing $DC for DHCP in AD." -Level Progress
+    $Error.Clear()
     Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         Add-DhcpServerInDC -DNSName $Using:Instance.DomainController -IPAddress $Using:Instance.DomainControllerIP
     }
@@ -1759,6 +1764,7 @@ Function SetUp-BTRDHCPServer {
 
     #Configure IPv4 options
     Write-BTRLog "Connfiguring IPv4 options." -Level Progress
+    $Error.Clear()
     Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         Set-DhcpServerSetting -ConflictDetectionAttempts 1
         Set-DhcpServerv4DnsSetting -DynamicUpdates "Always" -DeleteDnsRRonLeaseExpiry $True
@@ -1776,6 +1782,7 @@ Function SetUp-BTRDHCPServer {
     $End = $Instance.IPPrefix + "." + $Instance.DHCPStop
     $ScopeID = $Instance.IPPrefix + ".0"
     Write-BTRLog "Scope ID: $ScopeID.  from $Start to $Stop" -Level Debug
+    $Error.Clear()
     Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         Add-DhcpServerv4Scope -Name $Using:Instance.Name -StartRange $Using:Start -EndRange $Using:End -SubnetMask $Using:Instance.SubnetMask -State Active -LeaseDuration "1.0:00:00" 
         Set-DhcpServerv4OptionValue -ScopeId $Using:ScopeID -DNSServer $Using:Instance.DomainControllerIP -DNSDomain $Using:Instance.DomainName -Router $Using:Instance.Gateway

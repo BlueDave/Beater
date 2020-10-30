@@ -683,6 +683,8 @@ If (Hyper-V\Get-VM -ErrorAction SilentlyContinue | Where Name -like $DefaultInst
         Return
     }
 
+    Start-Sleep 3
+
     Write-BTRLog "Writing Config to $VMName" -Level Progress
     If (!(Apply-BTRVMCustomConfig -VMName $VMName -Instance $DefaultInstance -IpAddress $DefaultInstance.DomainControllerIP -JoinDomain $False -BaseImage $BaseImage)) {
         Write-BTRLog "Failed to apply custom config to DC" -Level Error
