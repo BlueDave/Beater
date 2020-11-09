@@ -296,12 +296,13 @@ Function Wait-BTRVMOffline {
 Function Install-BTRSofware {
     Param (
         [String]$Name,
-        $Instance,
-        $BaseImage,
+        [HashTable]$Instance,
+        [HashTable]$BaseImage,
         [Parameter(Mandatory=$True)][String]$VMName,
         [Parameter(Mandatory=$True)][String]$Installer,
         [String]$WebLink,
-        [String]$Args,
+        [String]$InstallCommand,
+        $Tweaks,
         [Bool]$IsDomainJoined = $True
         
     )

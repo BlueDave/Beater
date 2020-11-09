@@ -7,7 +7,8 @@ $LogLevel = 'Debug'
 $ConsoleLevel = 'Debug'
 $LogFile = "C:\WSUS\BeaterCommandLine.log"
 
-. .\BeaterFunction.ps1
+$RootFolder = Split-Path -Parent -Path $MyInvocation.MyCommand.Definition
+. "$RootFolder\BeaterFunction.ps1"
 
 
 Function Get-BTRServerConfig {
@@ -74,13 +75,18 @@ Function Get-BTRInstanceConfig {
     $NewInstance = @{}
 
     #Set Name
-    $Default = "Beater"
+    $OriginalDefault = "Beater"
+    [Int]$Append = 1
+    While($Config.Instances[$Default]) {
+        $Default = "$OriginalDefault$Append"
+        $Append++
+    }
     Do {
         $New = Read-Host "Instance Name? [$Default]"
         If (!($New)) {
             $New = $Default
         }
-    }Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{3,15}$")
+    }Until (($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{3,15}$") -and (!($BeaterConfig.Instances[$New])))
     $NewInstance.Name = $New
 
     #Set AppFolder
@@ -170,7 +176,9 @@ Function Get-BTRInstanceConfig {
     }
 
     #Set IP
-    $Default = "192.168.$(Get-Random -Minimum 2 -Maximum 254)"
+    Do {
+        $Default = "192.168.$(Get-Random -Minimum 2 -Maximum 254)"
+    } Until ($Default -notin ($BeaterConfig.Instances.Values.IPPrefix))
     Do {
         $New = Read-Host "Network Address [$Default]"
         If (!($New)) {
@@ -178,7 +186,7 @@ Function Get-BTRInstanceConfig {
         }ElseIf ($New.Substring($New.Length -2) -eq '.0') {
             $New = $New.Substring(0, $New.Length -2)
         }
-    }Until ($New -Match "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){2}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
+    }Until ($New -Match "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){2}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$" -and $New -notin ($BeaterConfig.Instances.Values.IPPrefix))
     $NewInstance.IPPrefix = $New
 
     #Set Subnet Mask and Subnet Mask Length
@@ -205,10 +213,12 @@ Function Get-BTRInstanceConfig {
 
     #Set Switch Name
     $Default = "$($NewInstance.Name)"
-    $New = Read-Host "Name of Switch [$Default]"
-    If (!($New)) {
-        $New = $Default
-    }
+    Do {
+        $New = Read-Host "Name of Switch [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -notIn (Hyper-V\Get-VMSwitch | Select -ExpandProperty Name))
     $NewInstance.SwitchName = $New
 
     #Set Domain Name
@@ -254,13 +264,19 @@ Function Get-BTRInstanceConfig {
     $NewInstance.AdminPassword = $New
 
     #Set Domain Controller Name
-    $Default = "DC1"
+    $VMs = Hyper-V\Get-VM | Select -ExpandProperty Name
+    $OriginalDefault = "DC"
+    [Int]$Append = 1
+    Do {
+        $Default = "$OriginalDefault$Append"
+        $Append++
+    }Until ($Default -notin $VMs)
     Do {
         $New = Read-Host "Domain Controller Name [$Default]"
         If (!($New)) {
             $New = $Default
         }
-    }Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{1,15}$")
+    }Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{1,15}$" -and $New -notin $VMs)
     $NewInstance.DomainController = $New
 
     #Set Domain Controller IP
@@ -462,6 +478,29 @@ Function Get-BTRBaseImageConfig {
     Return $NewBaseImage
 }
 
+
+Function Select-BTRInstance {
+    Param (
+        [Parameter(Mandatory=$True)]$Config
+    )
+    [Int]$Default = 1
+    $Instances = $BeaterConfig.Instances.Values.Name
+    Do {
+        Write-Host "Select Instance"
+        [Int]$I = 1
+        ForEach ($Instance In $Instances) {
+            Write-Host "   $I) $Instance"
+            $I++
+        }
+        [Int]$New = Read-Host "   Choice? [$Default]"
+        If (!($New)) {
+            [Int]$New = $Default
+        }
+    }Until ($New -le $Instances.Count)
+    Return $Instances[($New - 1)]
+}
+
+Return
 
 #region ServerSetup
 #Get/Set Server Config
@@ -742,3 +781,57 @@ If (Hyper-V\Get-VM -ErrorAction SilentlyContinue | Where Name -like $DefaultInst
 #endregion
 
 #Main menu
+Write-Host "Your setup is good"
+
+Do {
+    Write-Host "What do you want to do now"
+    Write-Host "1) Create New VM"
+    Write-Host "2) Create New Instance"
+    $Choice = Read-Host "Chose 1-2"
+}Until (1 -le $Choice -le 2)
+
+Switch ($Choice) {
+    1 {
+        $Instance = Select-BTRInstance -Config $BeaterConfig
+        
+        
+        ##Figure hostname
+        #$Default = ""
+        #Do {
+        #    $New = Read-Host "Domain Controller Name [$Default]"
+        #    If (!($New)) {
+        #        $New = $Default
+        #    }
+        #}Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{1,15}$")
+        #$HostName = $New
+        #
+        ##Get IP
+        #$Default = Get-NextIP
+        #Do {
+        #    $New = Read-Host "IP for Domain Controller $($NewInstance.DomainController)? [$Default]"
+        #    If (!($New)) {
+        #        $New = $Default
+        #    }
+        #}Until ($New -Match "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
+        #$NewInstance.DomainControllerIP = $New
+    }2{
+        #Create new instance
+        If ($NewInstance = Get-BTRInstanceConfig -Config $BeaterConfig) {
+            $BeaterConfig.Instances.Add($NewInstance.Name, $NewInstance)
+            If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
+                Write-BTRLog "Successfully updated config" -Level Progress
+                If (Configure-BTRInstance -Instance $BeaterConfig.Instances[$NewInstance.Name]) {
+                   Write-BTRLog "Created new instance $($NewInstance.Name)" -Level Progress
+                }Else{
+                    Write-BTRLog "Failed to create new instance $($NewInstance.Name)" -Level Error
+                }
+            }Else{
+             Write-BTRLog "Failed to write server config to registry" -Level Error
+            }
+        }Else{
+            Write-BTRLog "You didn't configure the instance fully"
+        }
+    }
+}
+
+    
