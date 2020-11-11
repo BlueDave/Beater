@@ -129,12 +129,13 @@ Function Wait-BTRVMOnline {
         [Parameter(Mandatory=$True)][String]$VMName,
         [Parameter(Mandatory=$True)]$Instance,
         [int64]$MaxWaitTime = 5,
-        [int64]$RetryEvery = 10
+        [int64]$RetryEvery = 10,
+        [Switch]$WaitForLogin
     )
 
     #Figure out credentials
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential("$VMName\$($Instance.AdminName)",$SecurePassword)
 
     #Make sure VM Exists and is on
     If (!(Hyper-V\Get-VM -Name $VMName)) {
@@ -158,11 +159,30 @@ Function Wait-BTRVMOnline {
                 $Error.Clear()
                 Start-Sleep -Seconds $RetryEvery
             }
-	    }Else{  
-            Write-BTRLog "Connected to $HostName with PSRemoting" -Level Progress
-            Return $True
+	    }Else{
+            If ($WaitForLogin) {
+                Write-BTRLog "Connected to $VMName with PSRemoting.  Now waiting for logon." -Level Debug
+                Do {
+                    $UserName = Invoke-Command -VMName $VMName -Credential $LocalCreds -ErrorAction SilentlyContinue -ScriptBlock { (Get-WmiObject Win32_ComputerSystem).Username }
+                    If ($UserName) {
+                        Write-BTRLog "User $UserName is logged into $VMName" -Level Progress
+                        Return $True
+                    }Else{
+                        If ($(Get-Date) -ge $GiveUpAt) {
+                            Write-BTRLog "We've waited $MaxWaitTime minutes and no one logged to $VMName.  Dying..." -Level Error
+                            Return $False
+                        }Else{
+                            $Error.Clear()
+                            Start-Sleep -Seconds $RetryEvery
+                        }
+                    }
+                }While ($True)
+            }Else{
+                Write-BTRLog "Connected to $VMName with PSRemoting" -Level Progress
+                Return $True
+            }
         }
-    } Until ($Test)
+    } While ($True)
 }
 
 Function Wait-BTRVMOffline {
@@ -1116,6 +1136,20 @@ Function Create-BTRBaseVM {
         Write-BTRLog "Attached DVD $($BaseImage.CustomISO) to $VMName." -Level Debug
     }
 
+    Write-BTRLog "Writing notes" -Level Progress
+    $Config = @{}
+    $Config.Add("Instance",$Instance.Name)
+    $config.Add("BaseImage",$BaseImage.Name)
+    $Notes = $Config | ConvertTo-Json
+    $Error.Clear()
+    Hyper-V\Set-VM -Name $VmName -Notes $Notes -ErrorAction SilentlyContinue
+    If ($Error) {
+        Write-BTRLog "Failed to set notes on VM. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
+
     Return $True
 }
 
@@ -1126,17 +1160,17 @@ Function Configure-BTRBaseImage {
     )
 
     Write-BTRLog "Entering configure-BTRBaseImage" -Level Debug
+    $VMName = $BaseImage.Name
 
     #Figure Creditials
     $Error.Clear()
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential("$($Instance.Name)\$($Instance.AdminName)", $SecurePassword)
+    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential("$VMName\$($Instance.AdminName)",$SecurePassword)
     If ($Error) {
         Write-BTRLog "Can't figure out local creditals. Error: $($Error[0].Exception.Message)" -Level Error
         Return $False
     }
 
-    $VMName = $BaseImage.Name
     Write-BTRLog "Making sure $VMName exists" -Level Debug
     If (!(Hyper-V\Get-VM | Where Name -EQ $VMName)) {
         Write-BTRLog "$VMName does not exist" -Level Error
@@ -1247,6 +1281,18 @@ Function Configure-BTRBaseImage {
         Write-BTRLog "Disabled IE Enhanced Security" -Level Progress
     }
 
+    Write-BTRLog "Disabling annoying message about New Windows Admin Center" -Level Debug
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\ServerManager" -Name "DoNotPopWACConsoleAtSMLaunch" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    }
+    If($Error) {
+        Write-BTRLog "Failed to disable annoying message about New Windows Admin Center. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "   Success!" -Level Progress
+    }
+
     Write-BTRLog "Enabling RDP"
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
@@ -1276,7 +1322,7 @@ Function Configure-BTRBaseImage {
     Write-BTRLog "Installing Optional Components" -Level Debug
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
-        Add-WindowsCapability -Online -Name NetFx3~~~~ -Source D:\Sources\sxs -ErrorAction SilentlyContinue *>&1 | Out-Null
+        DISM /online /enable-feature /featurename:NetFX3 /all / Source:<drive>:\sources\sxs /LimitAcces *>&1 | Out-Null
         Enable-WindowsOptionalFeature -Online -FeatureName TFTP -NoRestart -ErrorAction SilentlyContinue *>&1 | Out-Null
         Enable-WindowsOptionalFeature -Online -FeatureName TelnetClient -NoRestart -ErrorAction SilentlyContinue *>&1 | Out-Null
     }
@@ -1340,6 +1386,11 @@ Function Configure-BTRBaseImage {
     }
     
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
+        #Installing .Net 4
+        If (Test-Path "C:\Temp\ndp48-x86-x64-allos-enu.exe") {
+            Start-Process -FilePath "C:\Temp\ndp48-x86-x64-allos-enu.exe" -ArgumentList "/q /norestart" -Wait -NoNewWindow
+        }
+        
         #Installing Chrome
         If (Test-Path "C:\Temp\GoogleChromeStandaloneEnterprise64.msi") {
             Start-Process Msiexec.exe -ArgumentList '/i "C:\Temp\GoogleChromeStandaloneEnterprise64.msi" /qb!' -Wait
@@ -1411,6 +1462,8 @@ Function Configure-BTRBaseImage {
         Install-Module -Name PSWindowsUpdate -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
         Import-Module -Name PSWindowsUpdate
     }
+
+
 
     Write-BTRLog "Checking for updates" -Level Progress
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
@@ -1536,6 +1589,18 @@ Function Prep-BTRBaseImage {
         Write-BTRLog "  Success!" -Level Debug
     }
 
+    Write-BTRLog "Deleting NICs" -Level Progress #2019 doens't do this and it created problems later
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+        Get-ChildItem -Path HKLM:\SYSTEM\CurrentControlSet\Control\Network\Interfaces | Remove-Item -Force -Recurse -Confirm:$False
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to delete NICs. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
+
     Write-BTRLog "Running Sysprep" -Level Progress
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
@@ -1591,6 +1656,17 @@ Function Prep-BTRBaseImage {
     Remove-Item $BaseImage.CustomISO -Force -Confirm:$False -ErrorAction SilentlyContinue
     If ($Error) {
         Write-BTRLog "Failed to delete install ISO. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
+
+    $VMFolder = "$($Instance.VMPath)\$VMName"
+    Write-BTRLog "Deleting VM folder $VMFolder" -Level Progress
+    $Error.Clear()
+    Remove-Item $VMFolder -Recurse -Force -Confirm:$False -ErrorAction SilentlyContinue
+    If ($Error) {
+        Write-BTRLog "Failed to delete $VMFolder. Error: $($Error[0].Exception.Message)" -Level Error
         Return $False
     }Else{
         Write-BTRLog "  Success!" -Level Debug
@@ -1801,7 +1877,7 @@ Function SetUp-BTRDHCPServer {
     #Adding DHCP security groups
     Write-BTRLog "Adding DHCP security groups." -Level Progress
     $Error.Clear()
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+    Invoke-Command -VMName $DC -Credential $InstanceCreds -ScriptBlock {
         netsh dhcp add securitygroups
     }
     If ($Error) {
@@ -1814,7 +1890,7 @@ Function SetUp-BTRDHCPServer {
     #Restarting DHCP Service
     Write-BTRLog "Restarting DHCP." -Level Progress
     $Error.Clear()
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+    Invoke-Command -VMName $DC -Credential $InstanceCreds -ScriptBlock {
         Restart-Service dhcpserver  *>&1 | Out-Null
     }
     If ($Error) {
@@ -1827,7 +1903,7 @@ Function SetUp-BTRDHCPServer {
     #Authorize DHCP in Domain
     Write-BTRLog "Authorizing $DC for DHCP in AD." -Level Progress
     $Error.Clear()
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+    Invoke-Command -VMName $DC -Credential $InstanceCreds -ScriptBlock {
         Add-DhcpServerInDC -DNSName $Using:Instance.DomainController -IPAddress $Using:Instance.DomainControllerIP  *>&1 | Out-Null
     }
     If ($Error) {
@@ -1838,9 +1914,9 @@ Function SetUp-BTRDHCPServer {
     }
 
     #Configure IPv4 options
-    Write-BTRLog "Connfiguring IPv4 options." -Level Progress
+    Write-BTRLog "Configuring IPv4 options." -Level Progress
     $Error.Clear()
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+    Invoke-Command -VMName $DC -Credential $InstanceCreds -ScriptBlock {
         Set-DhcpServerSetting -ConflictDetectionAttempts 1
         Set-DhcpServerv4DnsSetting -DynamicUpdates "Always" -DeleteDnsRRonLeaseExpiry $True
     }
@@ -1856,9 +1932,9 @@ Function SetUp-BTRDHCPServer {
     $Start = $Instance.IPPrefix + "." + $Instance.DHCPStart
     $End = $Instance.IPPrefix + "." + $Instance.DHCPStop
     $ScopeID = $Instance.IPPrefix + ".0"
-    Write-BTRLog "Scope ID: $ScopeID.  from $Start to $Stop" -Level Debug
+    Write-BTRLog "Scope ID: $ScopeID.  from $Start to $End" -Level Debug
     $Error.Clear()
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+    Invoke-Command -VMName $DC -Credential $InstanceCreds -ScriptBlock {
         Add-DhcpServerv4Scope -Name $Using:Instance.Name -StartRange $Using:Start -EndRange $Using:End -SubnetMask $Using:Instance.SubnetMask -State Active -LeaseDuration "1.0:00:00" 
         Set-DhcpServerv4OptionValue -ScopeId $Using:ScopeID -DNSServer $Using:Instance.DomainControllerIP -DNSDomain $Using:Instance.DomainName -Router $Using:Instance.Gateway
     }
@@ -1870,7 +1946,7 @@ Function SetUp-BTRDHCPServer {
     }
 
     #Disable annoying message to finish DHCP setup
-    Write-BTRLog "Disaplying warning message." -Level Progress
+    Write-BTRLog "Disabling warning message about DHCP setup." -Level Progress
     $Error.Clear()
     Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
         Set-ItemProperty –Path registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\ServerManager\Roles\12 –Name ConfigurationState –Value 2
@@ -2106,59 +2182,63 @@ Function Delete-BTRVM {
         Write-BTRLog "Deleted $VMPath" -Level Progress
     }
 
-    #Connect to DC
-    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-    $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
-    Write-BTRLog "Connecting to $($Instance.DomainController)."
-    $Error.Clear()
-    $DomainSession = New-PSSession -VMName $Instance.DomainController -Credential $InstanceCreds
-    If ($Error) {
-        Write-BTRLog "Failed to create PS Session on $($Instance.DomainController). Error: $($Error[0].Exception.Message)" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Created PS Session to $($Instance.DomainController)" -Level Debug
-    }
+    #See if we need to do Domain cleanup
+    If ($Instance.DomainController) {
+        If ($Instance.DomainController -ne $VmName) {
+            $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+            $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+            Write-BTRLog "Connecting to $($Instance.DomainController)."
+            $Error.Clear()
+            $DomainSession = New-PSSession -VMName $Instance.DomainController -Credential $InstanceCreds
+            If ($Error) {
+                Write-BTRLog "Failed to create PS Session on $($Instance.DomainController). Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
+            }Else{
+                Write-BTRLog "Created PS Session to $($Instance.DomainController)" -Level Debug
+            }
 
-    #Remove from DNS and AD
-    Write-BTRLog "Checking if $VmName is in DNS" -Level Debug
-    $DNs = Invoke-Command -Session $DomainSession -ScriptBlock {
-        Try {
-            Get-DnsServerResourceRecord -ZoneName $Using:Instance.DomainName -Name $Using:VMName -ErrorAction SilentlyContinue
-        }Catch{
-            #Do Nothing
-        }
-    }
-    If ($DNS) {
-        Write-BTRLog "DNS record for $VmName exists.  Deleting." -Level Debug
-        Invoke-Command -Session $DomainSession -ScriptBlock {
-            Get-DnsServerResourceRecord -ZoneName $Using:Instance.DomainName -Name $Using:VMName | Remove-DnsServerResourceRecord -ZoneName $Using:Instance.DomainName -Confirm:$False -Force
-        }
-        $Error.Clear()
-        If ($Error) {
-            Write-BTRLog "Failed to remove DNS records for $VmName. Error: $($Error[0].Exception.Message)" -Level Error
-        }Else{
-            Write-BTRLog "Remove DNS records for $VmName." -Level Debug
-        }
-    }Else{
-        Write-BTRLog "DNS record for $VmName not found." -Level Debug
-    }
+            #Remove from DNS and AD
+            Write-BTRLog "Checking if $VmName is in DNS" -Level Debug
+            $DNS = Invoke-Command -Session $DomainSession -ScriptBlock {
+                Try {
+                    Get-DnsServerResourceRecord -ZoneName $Using:Instance.DomainName -Name $Using:VMName -ErrorAction SilentlyContinue
+                }Catch{
+                    #Do Nothing
+                }
+            }
+            If ($DNS) {
+                Write-BTRLog "DNS record for $VmName exists.  Deleting." -Level Debug
+                Invoke-Command -Session $DomainSession -ScriptBlock {
+                    Get-DnsServerResourceRecord -ZoneName $Using:Instance.DomainName -Name $Using:VMName | Remove-DnsServerResourceRecord -ZoneName $Using:Instance.DomainName -Confirm:$False -Force
+                }
+                $Error.Clear()
+                If ($Error) {
+                    Write-BTRLog "Failed to remove DNS records for $VmName. Error: $($Error[0].Exception.Message)" -Level Error
+                }Else{
+                    Write-BTRLog "Remove DNS records for $VmName." -Level Debug
+                }
+            }Else{
+                Write-BTRLog "DNS record for $VmName not found." -Level Debug
+            }
 
-    #Remove AD object
-    Write-BTRLog "Checking if $VmName is in DNS" -Level Debug
-    If (Invoke-Command -Session $DomainSession -ScriptBlock {Get-ADComputer $Using:VMName -ErrorAction SilentlyContinue }) {
-        Write-BTRLog "Domputer account for $VmName exists.  Deleting." -Level Debug
-        Invoke-Command -Session $DomainSession -ScriptBlock {
-            Get-ADComputer $Using:VMName | Remove-ADObject -Recursive -Confirm:$False
+            #Remove AD object
+            Write-BTRLog "Checking if $VmName is in DNS" -Level Debug
+            If (Invoke-Command -Session $DomainSession -ScriptBlock {Get-ADComputer $Using:VMName -ErrorAction SilentlyContinue }) {
+                Write-BTRLog "Domputer account for $VmName exists.  Deleting." -Level Debug
+                Invoke-Command -Session $DomainSession -ScriptBlock {
+                    Get-ADComputer $Using:VMName -ErrorAction SilentlyContinue | Remove-ADObject -Recursive -Confirm:$False
+                }
+                $Error.Clear()
+                If ($Error) {
+                    Write-BTRLog "Failed to remove AD account for $VmName. Error: $($Error[0].Exception.Message)" -Level Error
+                }Else{
+                    Write-BTRLog "Removed AD account for $VmName." -Level Progress
+                }
+            }Else{
+                Write-BTRLog "AD account for $VmName not found." -Level Debug
+            }
         }
-        $Error.Clear()
-        If ($Error) {
-            Write-BTRLog "Failed to remove AD account for $VmName. Error: $($Error[0].Exception.Message)" -Level Error
-        }Else{
-            Write-BTRLog "Removed AD account for $VmName." -Level Progress
-        }
-    }Else{
-        Write-BTRLog "AD account for $VmName not found." -Level Debug
-    } 
+    }
 
     Write-BTRLog "Exiting Delete-BTRVM" -Level Debug
     Return $True

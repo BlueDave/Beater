@@ -507,7 +507,8 @@ Function Select-cBTRInstance {
 
 Function Select-cBTRBaseImage {
     Param (
-        [Parameter(Mandatory=$True)]$Config
+        [Parameter(Mandatory=$True)]$Config,
+        [String]$Prompt = "Select BaseImage"
     )
     $BaseImages = $Config.BaseImages.Values.Name
     If ($BaseImages.Count -eq 0) {
@@ -517,7 +518,7 @@ Function Select-cBTRBaseImage {
     }        
     [Int]$Default = 1
     Do {
-        Write-Host "Select BaseImage"
+        Write-Host $Prompt
         [Int]$I = 1
         ForEach ($BaseImage In $BaseImages) {
             Write-Host "   $I) $BaseImage"
@@ -748,13 +749,17 @@ Function New-cBTRInstance {
             }
         }
 
-        #ToDo: Create DC
+        If (!($BaseImage = Select-cBTRBaseImage -Config $BeaterConfig -Prompt "Select Base image for DC")) {
+            Write-BTRLog "You must select a base image to build a DC." -Level Error
+            Return $False
+        }
 
-        #ToDo: Configure Domain
+        If (!(New-cBTRDomain -Instance $NewInstance)) {
+            Write-BTRLog "Failed to build domain." -Level Error
+            Return $False
+        }
     }
-
-                   
-
+      
     #Write instance to registry
     $BeaterConfig.Instances.Add($NewInstance.Name, $NewInstance)
     If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
@@ -821,12 +826,12 @@ Function New-cBTRDomain {
         Return $False
     }
            
-    Write-BTRLog "Waiting for $VMName to reboot (This seems to always take forever" -Level Progress
+    Write-BTRLog "Waiting for $VMName to reboot (This always seems to take forever.)" -Level Progress
     If (!(Wait-BTRVMOffline -Instance $Instance -VMName $VMName -MaxWaitTime 15 )) {
         Write-BTRLog "$VMName isn't rebooting." -Level Error
         Return $False
     }
-    If (!(Wait-BTRVMOnline -Instance $Instance -VMName $VMName -MaxWaitTime 15)) {
+    If (!(Wait-BTRVMOnline -Instance $Instance -VMName $VMName -MaxWaitTime 15 -WaitForLogin)) {
         Write-BTRLog "$VMName isn't rebooting." -Level Error
         Return $False
     }
