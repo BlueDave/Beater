@@ -123,95 +123,6 @@ Function Write-BTRToRegistry {
         Return $True
 }
 
-Function Validate-BTRHostconfig {
-    Param (
-        [Parameter(Mandatory=$True)]$Config
-    ) 
-
-    If (!($Config.RootPath)) {
-        Write-BTRLog -Level Debug -Entry "Root Path not defined"
-        Return $False
-    }
-
-    Return $True
-}
-
-Function Validate-BTRInstanceconfig {
-    Param (
-        [Parameter(Mandatory=$True)]$Instance
-    ) 
-
-    $ManditoryProperties = @(
-        "Host",
-        "Name",
-        "DomainName",
-        "NBDomainName",
-        "IPPrefix",
-        "Gateway",
-        "SubnetMask",
-        "SubnetLength",
-        "UseDHCP",
-        "DHCPStart",
-        "DHCPStop",
-        "AdminName",
-        "AdminNBName",
-        "AdminPassword",
-        "DomainController",
-        "DomainControllerIP",
-        "HDDPath",
-        "VMPath",
-        "SnapshotPath",
-        "WorkingFolder",
-        "CertFolder",
-        "AppFolder",
-        "VMTempFolder",
-        "SwitchName",
-        "UseNAT",
-        "TimeZone"
-    )
-
-    ForEach ($ManditoryProperty In $ManditoryProperties) {
-        If (!($Instance[$ManditoryProperty])) {
-            Write-BTRLog "$ManditoryProperty is not set" -Level Error
-            Return $False
-        }
-    }
-
-    Return $True
-}
-
-Function Validate-BTRHost {
-    Param (
-        [Parameter(Mandatory=$True)][HashTable]$Config
-    )
-
-    #Make sure root path exists
-    If (!(Test-Path $Config.RootPath -ErrorAction SilentlyContinue)) {
-        Write-BTRLog -Level Debug -Entry "Root Path $($Config.RootPath) does not exits"
-        Return $False
-    }
-
-    #Make sure Hyper-V is installed
-    If (Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V* -ErrorAction SilentlyContinue | Where State -NE 'Enabled') {
-        Write-BTRLog "Hyper-V is not installed, or not all features are installed." -Level Debug
-        Return $False
-    }
-
-    #Make sure ADK is installed
-    If ($Config.OscdimgPath) {
-        If (!(Test-Path $Config.OscdimgPath)) {
-           Write-BTRLog "ADK is not installed" -Level Debug
-           Return $False
-        }
-    }Else{
-        Write-BTRLog "Path to Oscdimg.exe is not defined" -Level Debug
-        Return $False
-    }
-
-    Return $True
-}
-
-
 
 Function Wait-BTRVMOnline {
     Param (
@@ -381,7 +292,7 @@ Function Install-BTRSofware {
     }
 }
 
-Function Get-NextIP {
+Function Get-BtrNextIP {
     Param (
         [Parameter(Mandatory=$True)]$Instance
     ) 
@@ -685,7 +596,105 @@ Function Delete-BTRInstance {
         [Switch]$DeleteFolders
     )
 
+    #Deal with any VMs
+    If ($VMs = Hyper-V\Get-VM | Select -ExpandProperty NetworkAdapters | Where SwitchName -like $Instance.SwitchName | Select -ExpandProperty VMName) {
+        Write-BTRLog "$(VMs.Count) VMs found in instance." -Level Debug
+        If ($DeleteVMs) {
+            ForEach ($VM In $VMs) {
+                Write-BTRLog "Deleting $VM." -Level Debug
+                If (!(Delete-BTRVM -Instance $Instance -VmName $VM)) {
+                    Write-BTRLog "Unable to delete $VM. Error: $($Error[0].Exception.Message)" -Level Error
+                    Return $False
+                }Else{
+                    Write-BTRLog "   Success!" -Level Debug
+                }
+            }
+        }Else{
+            Write-BTRLog "Instance $($Instance.Name) still contains VMs" -Level Error
+            Return $False
+        }
+    }
+
+    #Clean up folders
+    If ($DeleteFolders) {
+        If (Test-Path $($Instance.HDDPath)) {
+            Write-BTRLog "$($Instance.HDDPath) exists. Deleting." -Level Debug
+            $Error.Clear()
+            Remove-Item $($Instance.HDDPath) -Recurse -Confirm:$False -Force | Out-Null
+            If ($Error) {
+                Write-BTRLog "Failed to delete $($Instance.HDDPath). Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
+            }Else{
+                    Write-BTRLog "   Success!" -Level Debug
+            }
+        }
+        If (Test-Path $Instance.SnapshotPath) {
+            Write-BTRLog "$($Instance.SnapshotPath) exists. Deleting" -Level Debug
+            $Error.Clear()
+            Remove-Item $Instance.SnapshotPath -Recurse -Confirm:$False -Force | Out-Null
+            If ($Error) {
+                Write-BTRLog "Failed to delete $($Instance.SnapshotPath). Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
+            }Else{
+                    Write-BTRLog "   Success!" -Level Debug
+            }
+        }
+        If (!(Test-Path $($Instance.VMPath))) {
+            Write-BTRLog "$($Instance.VMPath) exists. Deleting" -Level Debug
+            $Error.Clear()
+            Remove-Item $($Instance.VMPath) -Recurse -Confirm:$False -Force | Out-Null
+            If ($Error) {
+                Write-BTRLog "Failed to delete $($Instance.VMPath). Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
+            }Else{
+                    Write-BTRLog "   Success!" -Level Debug
+            }
+        }
+
+        If (!(Test-Path $($Instance.BasePath))) {
+            Write-BTRLog "$($Instance.BasePath) exists. Deleting" -Level Debug
+            $Error.Clear()
+            Remove-Item $($Instance.BasePath) -Recurse -Confirm:$False -Force | Out-Null
+            If ($Error) {
+                Write-BTRLog "Failed to delete $($Instance.BasePath). Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
+            }Else{
+                    Write-BTRLog "   Success!" -Level Debug
+            }
+        }
+    }
+
+    #Remove NAT
+    $NatName = "$($Instance.SwitchName)NAT"
+    If (Get-NetNat | Where Name -eq $NatName) {
+        Write-BTRLog "Deleting $NatName" -Level Debug
+        $Error.Clear()
+        Remove-NetNat -Name $NatName -Confirm:$False -ErrorAction SilentlyContinue
+        If ($Error) {
+            Write-BTRLog "Failed to remove NAT $NatName. Error: $($Error[0].Exception.Message)" -Level Error
+            Return $False
+        }Else{
+            Write-BTRLog "   Success!" -Level Debug
+        }
+    }Else{
+        Write-BTRLog "NAT not configured."-Level Debug
+    }
+
+    #Remove Switch
+    If (Hyper-V\Get-VMSwitch -ErrorAction SilentlyContinue | Where Name -eq $Instance.SwitchName) {
+        Write-BTRLog "$($Instance.SwitchName) exists.  Deleting" -Level Debug
+        $Error.Clear()
+        Hyper-V\Remove-VMSwitch $Instance.SwitchName -Force -Confirm:$False -ErrorAction SilentlyContinue
+        If ($Error) {
+            Write-BTRLog "Failed to remove $($Instance.SwitchName). Error: $($Error[0].Exception.Message)" -Level Error
+            Return $False
+        }
+    }
+    
+    Return $True
+
 }
+
 
 
 Function Create-BTRISO {
@@ -1206,6 +1215,7 @@ Function Configure-BTRBaseImage {
         }Else{
             Write-BTRLog "Configured DNS" -Level Progress
         }
+
     }Else{
         Write-BTRLog "Base Image is set to use DHCP." -Level Debug
     }
@@ -1734,11 +1744,49 @@ Function SetUp-BTRDHCPServer {
 
     $DC = $Instance.DomainController
 
+    #Resetting Static IP, if you don't do this, DHCP fails to bind sometimes
+    Write-BTRLog "Getting VM Mac Address." -Level Debug
+    $MacAddress = $(Hyper-V\Get-VMNetworkAdapter -VMName $DC -ErrorAction SilentlyContinue | Select -ExpandProperty MACAddress) -replace "([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])", '$1$2-$3$4-$5$6-$7$8-$9$10-$11$12'
+    If ($MacAddress.Length -ne 17) {
+        Write-BTRLog "Unable to get Mac address" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "VM $DC has MAC address $MacAddress" -Level Debug
+    }
+    Write-BTRLog "Setting NIC to use DHCP." -Level Debug
+    $Error.Clear()
+    Invoke-Command -VMName $DC -Credential $InstanceCreds -ScriptBlock { 
+        $IfIndex = Get-NetAdapter -ErrorAction SilentlyContinue | WHERE MacAddress -eq $Using:MacAddress | Select -ExpandProperty ifIndex
+        Set-NetIPInterface -InterfaceIndex $IfIndex -Dhcp Enabled -ErrorAction SilentlyContinue
+        Set-DnsClientServerAddress -InterfaceIndex $IfIndex -ResetServerAddresses -ErrorAction SilentlyContinue
+        Remove-NetRoute -InterfaceIndex $IfIndex -Confirm:$False -ErrorAction SilentlyContinue
+    }
+    If ($Error) {
+        Write-BTRLog "Failed remove static IP. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
+    Write-BTRLog "Setting Static IP." -Level Debug
+    $Error.Clear()
+    Invoke-Command -VMName $DC -Credential $InstanceCreds -ScriptBlock { 
+        $IfIndex = Get-NetAdapter -ErrorAction SilentlyContinue | WHERE MacAddress -eq $Using:MacAddress | Select -ExpandProperty ifIndex
+        New-NetIPAddress -InterfaceIndex $IfIndex -AddressFamily IPv4 -IPAddress $Using:Instance.DomainControllerIP -PrefixLength $Using:Instance.SubnetLength -DefaultGateway $Using:Instance.Gateway *>&1 | Out-Null
+        Set-DnsClientServerAddress -InterfaceIndex $IfIndex -ServerAddresses $Using:Instance.DomainControllerIP *>&1 | Out-Null
+        Set-DnsClient -InterfaceIndex $IfIndex -RegisterThisConnectionsAddress $True *>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed Set static IP. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
+
     #Install DHCP role
     Write-BTRLog "Installing DHCP Role on $DC." -Level Progress
     $Error.Clear()
-    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
-        Install-WindowsFeature -Name DHCP -IncludeAllSubFeature -IncludeManagementTools -Confirm:$False
+    Invoke-Command -VMName $DC -Credential $InstanceCreds -ScriptBlock {
+        Install-WindowsFeature -Name DHCP -IncludeAllSubFeature -IncludeManagementTools -Confirm:$False  *>&1 | Out-Null
     }
     If ($Error) {
         Write-BTRLog "Failed to install DHCP role. Error: $($Error[0].Exception.Message)." -Level Error
@@ -1750,11 +1798,37 @@ Function SetUp-BTRDHCPServer {
     Write-BTRLog "Waiting for DHCP install to finalize." -Level Progress
     Start-Sleep 5
 
+    #Adding DHCP security groups
+    Write-BTRLog "Adding DHCP security groups." -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+        netsh dhcp add securitygroups
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to add DHCP security groups. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
+    
+    #Restarting DHCP Service
+    Write-BTRLog "Restarting DHCP." -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+        Restart-Service dhcpserver  *>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to restart DHCP service. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
+
     #Authorize DHCP in Domain
     Write-BTRLog "Authorizing $DC for DHCP in AD." -Level Progress
     $Error.Clear()
     Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
-        Add-DhcpServerInDC -DNSName $Using:Instance.DomainController -IPAddress $Using:Instance.DomainControllerIP
+        Add-DhcpServerInDC -DNSName $Using:Instance.DomainController -IPAddress $Using:Instance.DomainControllerIP  *>&1 | Out-Null
     }
     If ($Error) {
         Write-BTRLog "Failed to autorize $DC for DHCP. Error: $($Error[0].Exception.Message)." -Level Error
@@ -1795,6 +1869,20 @@ Function SetUp-BTRDHCPServer {
         Write-BTRLog "     Success!" -Level Debug
     }
 
+    #Disable annoying message to finish DHCP setup
+    Write-BTRLog "Disaplying warning message." -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+        Set-ItemProperty –Path registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\ServerManager\Roles\12 –Name ConfigurationState –Value 2
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to set DHCP options. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
+
+
     Return $True
 }
 
@@ -1802,12 +1890,12 @@ Function SetUp-BTRDHCPServer {
 
 Function New-BTRVMFromTemplate {
      Param (
-        [Parameter(Mandatory=$True)]$Instance,
+        [Parameter(Mandatory=$True)][HashTable]$Instance,
         [Parameter(Mandatory=$True)][String]$VmName,
-        [Parameter(Mandatory=$True)]$BaseImage,
+        [Parameter(Mandatory=$True)][HashTable]$BaseImage,
         [Int]$CPUCount = 3,
-        [Int64]$MemoryMB,
-        [Int64]$MemoryGB
+        [Int]$MemoryMB,
+        [Int]$MemoryGB
     ) 
 
     If ($MemoryGB) {
@@ -1853,12 +1941,26 @@ Function New-BTRVMFromTemplate {
     Write-BTRLog "Configuring $VMName" -Level Progress
     $Error.Clear()
     Hyper-V\Set-VM -Name $VMName -ProcessorCount $CPUCount -AutomaticCheckpointsEnabled:$False -CheckpointType Production -Confirm:$False -SnapshotFileLocation $Instance.SnapShotPath
-    Hyper-V\Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $True -MinimumBytes $Memory
+    Hyper-V\Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $True -StartupBytes $Memory
     Hyper-V\Connect-VMNetworkAdapter -VMName $VMName -SwitchName $Instance.SwitchName
     Hyper-V\Enable-VMIntegrationService -VMName $VMName -Name "Guest Service Interface"
     Hyper-V\Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
     If ($Error) {
         Write-BTRLog "Failed to configure VM. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
+
+    Write-BTRLog "Writing notes" -Level Progress
+    $Config = @{}
+    $Config.Add("Instance",$Instance.Name)
+    $config.Add("BaseImage",$BaseImage.Name)
+    $Notes = $Config | ConvertTo-Json
+    $Error.Clear()
+    Hyper-V\Set-VM -Name $VmName -Notes $Notes -ErrorAction SilentlyContinue
+    If ($Error) {
+        Write-BTRLog "Failed to set notes on VM. Error: $($Error[0].Exception.Message)." -Level Error
         Return $False
     }Else{
         Write-BTRLog "     Success!" -Level Debug
@@ -1905,26 +2007,22 @@ Function New-BTRVMFromTemplate {
     
 Function Delete-BTRVM {
     Param (
-        [Parameter(Mandatory=$True)]$Instance,
         [Parameter(Mandatory=$True)][String]$VmName
     )
 
     Write-BTRLog "Entering Delete-BTRVM" -Level Debug
-
-    #Connect Session to DC
-    Write-BTRLog "Connecting to $($Instance.DomainController)."
-    $Error.Clear()
-    $DomainSession = New-PSSession -VMName $Instance.DomainController -Credential $Instance.DomainCreds
-    If ($Error) {
-        Write-BTRLog "Failed to create PS Session on $($Instance.DomainController). Error: $($Error[0].Exception.Message)" -Level Error
-        Return
-    }Else{
-        Write-BTRLog "Created PS Session to $($Instance.DomainController)" -Level Debug
-    }
-
+    
     If (!($VM = Hyper-V\Get-VM -Name $VmName -ErrorAction SilentlyContinue)) {
         Write-BTRLog "$VmName does not exist" -Level Error
-        Return
+        Return $False
+    }
+
+    #Figure out Instance
+    $InstanceName = $VM.Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Select -ExpandProperty Instance
+    Write-BTRLog "$VmName is member of $InstanceName." -Level Debug
+    If (!($Instance = $BeaterConfig.Instances[$InstanceName])) {
+        Write-BTRLog "Unable to find instance for $VmName" -Level Error
+        Return $False
     }
 
     #Turn Off VM
@@ -1936,7 +2034,7 @@ Function Delete-BTRVM {
         Hyper-V\Stop-vm -Name $VmName -Force -TurnOff
         If ($Error) {
             Write-BTRLog "Unable to powering off $VmName. Error: $($Error[0].Exception.Message)" -Level Error
-            Return
+            Return $False
         }Else{
             Write-BTRLog "Powered off $VmName." -Level Debug
         }
@@ -1977,7 +2075,7 @@ Function Delete-BTRVM {
     $Vm | Hyper-V\Remove-VM -Force -Confirm:$False
     If ($Error) {
         Write-BTRLog "Failed to delete $VmName. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     }Else{
         Write-BTRLog "Deleted $VmName" -Level Progress
     }
@@ -1990,7 +2088,7 @@ Function Delete-BTRVM {
         Remove-Item -Path $HDD -Force -Confirm:$False
         If ($Error) {
             Write-BTRLog "Failed to delete $HDD. Error: $($Error[0].Exception.Message)" -Level Error
-            Return
+            Return $False
         }Else{
             Write-BTRLog "Deleted $HDD" -Level Debug
         }
@@ -2003,9 +2101,22 @@ Function Delete-BTRVM {
     Remove-Item -Path $VMPath -Force -Recurse -Confirm:$False -ErrorAction SilentlyContinue
     If ($Error) {
         Write-BTRLog "Failed to delete $VMPath. Error: $($Error[0].Exception.Message)" -Level Error
-        Return
+        Return $False
     }Else{
         Write-BTRLog "Deleted $VMPath" -Level Progress
+    }
+
+    #Connect to DC
+    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    Write-BTRLog "Connecting to $($Instance.DomainController)."
+    $Error.Clear()
+    $DomainSession = New-PSSession -VMName $Instance.DomainController -Credential $InstanceCreds
+    If ($Error) {
+        Write-BTRLog "Failed to create PS Session on $($Instance.DomainController). Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Created PS Session to $($Instance.DomainController)" -Level Debug
     }
 
     #Remove from DNS and AD
@@ -2050,6 +2161,7 @@ Function Delete-BTRVM {
     } 
 
     Write-BTRLog "Exiting Delete-BTRVM" -Level Debug
+    Return $True
 }
 
 Function Add-BtrDNSRecord {
@@ -2076,9 +2188,9 @@ Function Add-BtrDNSRecord {
 
 Function Apply-BTRVMCustomConfig {
     Param (
-        [Parameter(Mandatory=$True)]$Instance,
+        [Parameter(Mandatory=$True)][HashTable]$Instance,
         [Parameter(Mandatory=$True)][String]$VMName,
-        [Parameter(Mandatory=$True)][String]$IpAddress,
+        [String]$IpAddress,
         [Parameter(Mandatory=$True)]$BaseImage,
         [Bool]$JoinDomain = $True
     )
@@ -2126,7 +2238,10 @@ Function Apply-BTRVMCustomConfig {
     		<component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     			<ComputerName>' + $VMName + '</ComputerName>
     			<ProductKey>' + $BaseImage.ProductKey + '</ProductKey>
-    		</component>
+    		</component>'
+
+            If ($IpAddress) {
+            $FileContent += '
     		<component name="Microsoft-Windows-TCPIP" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     			<Interfaces>
     				<Interface wcm:action="add">
@@ -2163,6 +2278,7 @@ Function Apply-BTRVMCustomConfig {
     				</Interface>
     			</Interfaces>
     		</component>'
+        }
 
         If ($JoinDomain) {
             $FileContent += '
@@ -2240,7 +2356,7 @@ Function Tweak-BTRVMPostDeloy {
     Param (
         [Parameter(Mandatory=$True)]$Instance,
         [Parameter(Mandatory=$True)][String]$VMName,
-        [Switch]$UseDomainCreds
+        [Bool]$UseDomainCreds = $True
     )
 
     If ($UseDomainCreds) {
