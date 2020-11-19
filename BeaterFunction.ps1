@@ -195,7 +195,7 @@ Function Wait-BTRVMOffline {
 
     #Figure out credentials
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminName,$SecurePassword)
 
     #Make sure VM Exists and is on
     If (!(Hyper-V\Get-VM -Name $VMName)) {
@@ -208,7 +208,7 @@ Function Wait-BTRVMOffline {
     Write-BTRLog "Will give up at $GiveUpAt." -Level Debug
     Do {
         $Error.Clear()
-        $Test = Invoke-Command -VMName $VMName -Credential $LocalCreds -ErrorAction SilentlyContinue -ScriptBlock {Get-Verb}
+        $OS = Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {Get-Verb}
         If ($Error) {
             Write-BTRLog "$VMName is now offline" -Level Debug
             Return $True
@@ -221,8 +221,77 @@ Function Wait-BTRVMOffline {
                 Start-Sleep -Seconds $RetryEvery
             }
         }
-    } Until ($Error)
+    } While ($True)
 }
+
+Function Wait-BTRVMReboot {
+    Param (
+        [Parameter(Mandatory=$True)][String]$VMName,
+        [HashTable]$Instance,
+        [int64]$MaxWaitTime = 10,
+        [int64]$RetryEvery = 3
+    )
+
+    #Make sure VM Exists
+    If (!($VM = Hyper-V\Get-VM -Name $VMName)) {
+        Read-Host "$VMName does not exist"
+        Return $False
+    }
+
+    #Figure out instance from VM
+    $InstanceName = $VM.Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Select -ExpandProperty Instance
+    Write-BTRLog "$VmName is member of $InstanceName." -Level Debug
+    If (!($Instance = $BeaterConfig.Instances[$InstanceName])) {
+        Write-BTRLog "Unable to find instance for $VmName" -Level Error
+        Return $False
+    }
+
+    #Figure out credentials
+    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminName,$SecurePassword)
+
+    Write-BTRLog "Getting start time on $VMName." -Level Debug
+    $StartTime = Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {Get-Date}
+    Write-BTRLog "  VMs time is $StartTime" -Level Debug
+
+    Write-BTRLog "Waiting for $VMName to reboot." -Level Debug
+    $GiveUpAt = (Get-Date).AddMinutes($MaxWaitTime)
+    Write-BTRLog "   Will give up at $GiveUpAt." -Level Debug
+    Do {
+        $Error.Clear()
+        $LastReboot = Invoke-Command -VMName $VMName -Credential $LocalCreds -ErrorAction SilentlyContinue -ScriptBlock {
+            $OS = Get-WmiObject Win32_OperatingSystem
+            $OS.ConvertToDateTime($OS.LastBootUpTime)
+        }
+        If ($Error) {
+            Write-BTRLog "Failed to connect to $VMName.  Error: $($Error[0].Exception.Message)" -Level Error
+            If ($(Get-Date) -ge $GiveUpAt) {
+                Write-BTRLog "We've waited $MaxWaitTime minutes and $VMName is still offline." -Level Error
+                Return $False
+            }Else{
+                $Error.Clear()
+                Write-BTRLog "Sleeping for $RetryEvery seconds" -Level Debug
+                Start-Sleep -Seconds $RetryEvery
+            }
+	    }Else{
+            Write-BTRLog "Last reboot was at $LastReboot." -Level Debug
+            If ($LastReboot -gt $StartTime) {
+                Write-BTRLog "Reboot done." -Level Progress
+                Return $True
+            }Else{
+                If ($(Get-Date) -ge $GiveUpAt) {
+                    Write-BTRLog "We've waited $MaxWaitTime minutes and $VMName hasn't rebooted." -Level Error
+                    Return $False
+                }Else{
+                    Write-BTRLog "Sleeping for $RetryEvery seconds" -Level Debug
+                    $Error.Clear()
+                    Start-Sleep -Seconds $RetryEvery
+                }
+            }
+        }
+    } While ($True)
+}
+
 
 Function Install-BTRSofware {
     Param (
@@ -1336,7 +1405,7 @@ Function Configure-BTRBaseImage {
     Write-BTRLog "Installing Admin Tools" -Level Debug
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
-        If ($(Get-WmiObject Win32_OperatingSystem).ProductType -ne 1) {
+        If ($(Get-WmiObject Win32_OperatingSystem -ErrorAction SilentlyContinue ).ProductType -ne 1) {
             Install-WindowsFeature -IncludeAllSubFeature RSAT -ErrorAction SilentlyContinue *>&1 | Out-Null
             Install-WindowsFeature -IncludeAllSubFeature GPMC -ErrorAction SilentlyContinue *>&1 | Out-Null
         }Else{
@@ -1386,7 +1455,7 @@ Function Configure-BTRBaseImage {
     }
     
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
-        #Installing .Net 4
+        #Installing .Net 4.8
         If (Test-Path "C:\Temp\ndp48-x86-x64-allos-enu.exe") {
             Start-Process -FilePath "C:\Temp\ndp48-x86-x64-allos-enu.exe" -ArgumentList "/q /norestart" -Wait -NoNewWindow
         }
@@ -1456,6 +1525,7 @@ Function Configure-BTRBaseImage {
     Write-BTRLog "Installing Windows Update Module" -Level Progress
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Set-ExecutionPolicy Unrestricted -Force -Confirm:$False *>&1 | Out-Null
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Install-PackageProvider -Name NuGet -Confirm:$False -Force -ErrorAction SilentlyContinue *>&1 | Out-Null
         Register-PSRepository -Default -InstallationPolicy Trusted -ErrorAction SilentlyContinue *>&1 | Out-Null
         Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
@@ -1463,7 +1533,23 @@ Function Configure-BTRBaseImage {
         Import-Module -Name PSWindowsUpdate
     }
 
-
+    Write-BTRLog  "Rebooting" -Level Progress
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
+        Restart-Computer -Force -Confirm:$False -ErrorAction SilentlyContinue
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to restart computer. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "  Success!" -Level Debug
+    }
+    If (Wait-BTRVMReboot -VMName $VMName) {
+        Write-BTRLog "$VMName has rebooted" -Level Progress
+    }Else{
+        Write-BTRLog "$VMName failed to reboot" -Level Error
+        Return $False
+    }
 
     Write-BTRLog "Checking for updates" -Level Progress
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
@@ -2223,12 +2309,16 @@ Function Delete-BTRVM {
 
             #Remove AD object
             Write-BTRLog "Checking if $VmName is in DNS" -Level Debug
-            If (Invoke-Command -Session $DomainSession -ScriptBlock {Get-ADComputer $Using:VMName -ErrorAction SilentlyContinue }) {
+            If (Invoke-Command -Session $DomainSession -ScriptBlock { Try{ Get-ADComputer $Using:VMName -ErrorAction SilentlyContinue } Catch {  } }) {
                 Write-BTRLog "Domputer account for $VmName exists.  Deleting." -Level Debug
+                 $Error.Clear()
                 Invoke-Command -Session $DomainSession -ScriptBlock {
-                    Get-ADComputer $Using:VMName -ErrorAction SilentlyContinue | Remove-ADObject -Recursive -Confirm:$False
+                    Try{
+                        Get-ADComputer $Using:VMName -ErrorAction SilentlyContinue | Remove-ADObject -Recursive -Confirm:$False
+                    }Catch{
+                        #Do Nothing
+                    }
                 }
-                $Error.Clear()
                 If ($Error) {
                     Write-BTRLog "Failed to remove AD account for $VmName. Error: $($Error[0].Exception.Message)" -Level Error
                 }Else{

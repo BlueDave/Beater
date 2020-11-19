@@ -382,12 +382,13 @@ Function Get-cBTRBaseImageConfig {
     }
 
     #Set Name
+    $BaseImages = $BeaterConfig.BaseImages.Values.Name
     Do {
         $New = Read-Host "Base image name? [$DefautName]"
         If (!($New)) {
             $New = $DefautName
         }
-    }Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{3,15}$")
+    }Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{3,15}$" -and $New -notin $BaseImages)
     $NewBaseImage.Name = $New
 
     #Set file name
