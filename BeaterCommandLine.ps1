@@ -76,10 +76,14 @@ Function Get-cBTRInstanceConfig {
 
     #Set Name
     $OriginalDefault = "Beater"
-    [Int]$Append = 1
-    While($Config.Instances[$Default]) {
-        $Default = "$OriginalDefault$Append"
-        $Append++
+    If ($Config.Instances.Count -gt 0) {
+        [Int]$Append = 1
+        While($Config.Instances[$Default]) {
+            $Default = "$OriginalDefault$Append"
+            $Append++
+        }
+    }Else{
+        $Default = $OriginalDefault
     }
     Do {
         $New = Read-Host "Instance Name? [$Default]"
@@ -129,8 +133,18 @@ Function Get-cBTRInstanceConfig {
     }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
     $NewInstance.VMPath = $New
 
+    #Set Base Folder
+    $Default = "$($Config.RootPath)\$($NewInstance.Name)"
+    Do {
+        $New = Read-Host "Path to base folder? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
+    $NewInstance.BasePath = $New
+
     #Set HDD Folder
-    $Default = "$($Config.RootPath)\$($NewInstance.Name)\Virtual Hard Disks"
+    $Default = "$($NewInstance.BasePath)\Virtual Hard Disks"
     Do {
         $New = Read-Host "Path to HDD folder? [$Default]"
         If (!($New)) {
@@ -140,7 +154,7 @@ Function Get-cBTRInstanceConfig {
     $NewInstance.HDDPath = $New
 
     #Set Snapshot Folder
-    $Default = "$($Config.RootPath)\$($NewInstance.Name)\Snapshots"
+    $Default = "$($NewInstance.BasePath)\Snapshots"
     Do {
         $New = Read-Host "Path to snapshot folder? [$Default]"
         If (!($New)) {
@@ -230,8 +244,7 @@ Function Get-cBTRInstanceConfig {
         }
     }Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{1,15}$")
     $NewInstance.AdminName = $New
-    $NewInstance.AdminNBName = "$($NewInstance.NBDomainName)\$New"
-
+    
     #Set Admin Password
     $Default = "P@ssw0rd99"
     Do {
@@ -263,6 +276,7 @@ Function Get-cBTRInstanceConfig {
             }
         }Until ($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{1,15}$")
         $NewInstance.NBDomainName = $New
+        $NewInstance.AdminNBName = "$($NewInstance.NBDomainName)\$($NewInstance.AdminName)"
 
         #Set Domain Controller Name
         $VMs = Hyper-V\Get-VM | Select -ExpandProperty Name
@@ -696,13 +710,13 @@ Param (
 
     #Waiting for VM to build
     Write-BTRLog "Waiting for $VMName to finish building." -Level Progress
-    If (!(Wait-BTRVMOnline -VMName $VMName -Instance $DefaultInstance)) {
+    If (!(Wait-BTRVMOnline -VMName $VMName -Instance $Instance)) {
         Write-BTRLog "$VMName never came online" -Level Error
         Return $False
     }
 
     Write-BTRLog "Doing post deploy tweaks on $VMName" -Level Progress
-    If (!(Tweak-BTRVMPostDeloy -VMName $VMName -Instance $DefaultInstance -UseDomainCreds $JoinDomain)) {
+    If (!(Tweak-BTRVMPostDeloy -VMName $VMName -Instance $Instance -UseDomainCreds $JoinDomain)) {
         Write-BTRLog "Failed to apply post deploy tweaks to $VMName." -Level Error
         Return $False
     }
@@ -750,17 +764,20 @@ Function New-cBTRInstance {
             }
         }
 
-        If (!($BaseImage = Select-cBTRBaseImage -Config $BeaterConfig -Prompt "Select Base image for DC")) {
+        If (!($BaseImageName = Select-cBTRBaseImage -Config $BeaterConfig -Prompt "Select Base image for DC")) {
             Write-BTRLog "You must select a base image to build a DC." -Level Error
             Return $False
         }
+        $BaseImage = $BeaterConfig.BaseImages[$BaseImageName]
 
-        If (!(New-cBTRDomain -Instance $NewInstance)) {
+        If (!(New-cBTRDomain -Instance $NewInstance -BaseImage $BaseImage)) {
             Write-BTRLog "Failed to build domain." -Level Error
             Return $False
         }
+    }Else{
+        Write-BTRLog "Domain was not configured, will not setup" -Level Debug
     }
-      
+        
     #Write instance to registry
     $BeaterConfig.Instances.Add($NewInstance.Name, $NewInstance)
     If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
@@ -787,7 +804,7 @@ Function New-cBTRDomain {
     }
 
     Write-BTRLog "Creating $VMName" -Level Progress
-    If (!(New-BTRVMFromTemplate -Instance $DefaultInstance -VmName $VMName -BaseImage $BaseImage)) {
+    If (!(New-BTRVMFromTemplate -Instance $Instance -VmName $VMName -BaseImage $BaseImage)) {
         Write-BTRLog "Failed to make VM $VMName" -Level Error
         Return $False
     }
@@ -827,12 +844,8 @@ Function New-cBTRDomain {
         Return $False
     }
            
-    Write-BTRLog "Waiting for $VMName to reboot (This always seems to take forever.)" -Level Progress
-    If (!(Wait-BTRVMOffline -Instance $Instance -VMName $VMName -MaxWaitTime 15 )) {
-        Write-BTRLog "$VMName isn't rebooting." -Level Error
-        Return $False
-    }
-    If (!(Wait-BTRVMOnline -Instance $Instance -VMName $VMName -MaxWaitTime 15 -WaitForLogin)) {
+    Write-BTRLog "Waiting for $VMName to reboot. (This always seems to take forever.)" -Level Progress
+    If (!(Wait-BTRVMOffline -VMName $VMName -Instance $Instance -MaxWaitTime 15 -JoinedDomain )) {
         Write-BTRLog "$VMName isn't rebooting." -Level Error
         Return $False
     }
@@ -880,7 +893,7 @@ Function New-cBTRBaseImage {
     }Else{
         $CustomizeImage = $False
     }
-
+    
     #Create ISO
     If (Create-BTRISO -Instance $Instance -BaseImage $NewBaseImage) {
         Write-BTRLog "Created ISO " -Level Progress
@@ -888,16 +901,16 @@ Function New-cBTRBaseImage {
         Write-BTRLog "Failed to create ISO" -Level Error
         Return $False
     }
-
+    
     #Create VM for base image
-    If (!(Create-BTRBaseVM -Instance $DefaultInstance -BaseImage $NewBaseImage)) {
+    If (!(Create-BTRBaseVM -Instance $Instance -BaseImage $NewBaseImage)) {
         Write-BTRLog "Failed to create VM for $($NewBaseImage.Name)." -Level Error
         Return $False
     }
-
+    
     Write-BTRLog "Base VM created. Waiting 5 seconds for VM to stabilize." -Level Progress
     Start-Sleep -Seconds 5
-
+    
     Write-BTRLog "Starting VM" -Level Progress
     $Error.Clear()
     Hyper-V\Start-VM -VMName $NewBaseImage.Name -ErrorAction SilentlyContinue
@@ -907,13 +920,13 @@ Function New-cBTRBaseImage {
     }Else{
         Write-BTRLog "   Success" -Level Debug
     }
-
+    
     #Wait for VM to come online
     If (!(Wait-BTRVMOnline -Instance $Instance -VMName $NewBaseImage.Name)) {
         Write-BTRLog "$($BaseImage.Name) never came online" -Level Error
         Return $False
     }
-
+    
     #Configure Base VM
     Write-BTRLog "Configuring base image" -Level Progress
     If (Configure-BTRBaseImage -Instance $Instance -BaseImage $NewBaseImage) {
@@ -929,12 +942,13 @@ Function New-cBTRBaseImage {
         Write-BTRLog "$($NewBaseImage.Name) isn't shutting down." -Level Error
         Return $False
     }
+    
     Write-BTRLog "Waiting for vm to finish reboot" -Level Progress
     If (!(Wait-BTRVMOnline -Instance $Instance -VMName $NewBaseImage.Name)) {
         Write-BTRLog "$($NewBaseImage.Name) isn't comming up." -Level Error
         Return $False
     }
-
+    
     #Pause for customization
     If ($CustomizeImage) {
         Write-Host "Base image deployement is done.  Go ahead and customize it."
@@ -1044,24 +1058,10 @@ Do {
             }
         }4{
             #Create new instance
-            If ($NewInstance = Get-cBTRInstanceConfig -Config $BeaterConfig) {
-                If (Configure-BTRInstance -Instance $NewInstance) {
-                    Write-BTRLog "Created new instance $($NewInstance.Name)" -Level Progress
-                    $BeaterConfig.Instances.Add($NewInstance.Name, $NewInstance)
-                    If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
-                        Write-BTRLog "Successfully wrote new instance to registry" -Level Progress
-                    }Else{
-                        Write-BTRLog "Failed to write new instance to registry. Error: $($Error[0].Exception.Message)." -Level Error
-                    }
-                }Else{
-                    Write-BTRLog "Failed to create new instance $($NewInstance.Name). Error: $($Error[0].Exception.Message)." -Level Error
-                }
-            }Else{
-                Write-BTRLog "You didn't configure the instance fully" -Level Error
-            }
+            New-cBTRInstance -Config $BeaterConfig
         }5{
             #Delete Instance
-            $DeleteMe = Select-BTRInstance -Config $BeaterConfig
+            $DeleteMe = Select-cBTRInstance -Config $BeaterConfig
             If (Delete-BTRInstance -Instance $BeaterConfig.Instances[$DeleteMe] -DeleteVMs -DeleteFolders) {
                 Write-BTRLog "Deleted Instance $DeleteMe" -Level Progress
                 $BeaterConfig.Instances.Remove($DeleteMe)

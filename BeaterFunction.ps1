@@ -229,7 +229,8 @@ Function Wait-BTRVMReboot {
         [Parameter(Mandatory=$True)][String]$VMName,
         [HashTable]$Instance,
         [int64]$MaxWaitTime = 10,
-        [int64]$RetryEvery = 3
+        [int64]$RetryEvery = 3,
+        [Switch]$JoinedDomain
     )
 
     #Make sure VM Exists
@@ -239,16 +240,19 @@ Function Wait-BTRVMReboot {
     }
 
     #Figure out instance from VM
-    $InstanceName = $VM.Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Select -ExpandProperty Instance
-    Write-BTRLog "$VmName is member of $InstanceName." -Level Debug
-    If (!($Instance = $BeaterConfig.Instances[$InstanceName])) {
-        Write-BTRLog "Unable to find instance for $VmName" -Level Error
-        Return $False
+    If (!($Instance)) {
+        $InstanceName = $VM.Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Select -ExpandProperty Instance
+        Write-BTRLog "$VmName is member of $InstanceName." -Level Debug
+        If (!($Instance = $BeaterConfig.Instances[$InstanceName])) {
+            Write-BTRLog "Unable to find instance for $VmName" -Level Error
+            Return $False
+        }
     }
 
     #Figure out credentials
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
     $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminName,$SecurePassword)
+    $DomainCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
 
     Write-BTRLog "Getting start time on $VMName." -Level Debug
     $StartTime = Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {Get-Date}
@@ -257,9 +261,14 @@ Function Wait-BTRVMReboot {
     Write-BTRLog "Waiting for $VMName to reboot." -Level Debug
     $GiveUpAt = (Get-Date).AddMinutes($MaxWaitTime)
     Write-BTRLog "   Will give up at $GiveUpAt." -Level Debug
+    If ($JoinedDomain) {
+        $UseCreds = $DomainCreds
+    }Else{
+        $UseCreds = $LocalCreds
+    }
     Do {
         $Error.Clear()
-        $LastReboot = Invoke-Command -VMName $VMName -Credential $LocalCreds -ErrorAction SilentlyContinue -ScriptBlock {
+        $LastReboot = Invoke-Command -VMName $VMName -Credential $UseCreds -ErrorAction SilentlyContinue -ScriptBlock {
             $OS = Get-WmiObject Win32_OperatingSystem
             $OS.ConvertToDateTime($OS.LastBootUpTime)
         }
@@ -296,89 +305,135 @@ Function Wait-BTRVMReboot {
 Function Install-BTRSofware {
     Param (
         [String]$Name,
-        [HashTable]$Instance,
-        [HashTable]$BaseImage,
         [Parameter(Mandatory=$True)][String]$VMName,
         [Parameter(Mandatory=$True)][String]$Installer,
+        [String]$Args,
         [String]$WebLink,
-        [String]$InstallCommand,
-        $Tweaks,
-        [Bool]$IsDomainJoined = $True
+        [String]$Tweaks,
+        [Switch]$MSI
         
     )
 
-    If (!($Instance -or $BaseImage)) {
-        Read-Host "You must provide either a Base Image or an Instance"
-        Return
+    #Make sure VM exists
+    If (!($VM = Hyper-V\Get-VM -ErrorAction SilentlyContinue | Where Name -EQ $VMName)) {
+        "$VMName does not exist"
+        Return $False
     }
 
-    If ($Instance -and $BaseImage) {
-        Read-Host "You can not specify both a base image and an instance"
-        Return
-    }
-
-    If ($Instance) {
-        If ($IsDomainJoined) {
-            $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-            $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
-        }Else{
-            $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-            $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminName,$SecurePassword)
-        }
-        $HostPath = $Instance.WorkingFolder
-        $HostFullPath = "$HostPath`\$Installer"
-        $VMPath = $Instance.VMTempFolder
-        $VMFullpath = "$VMPath`\$Installer"
+    #Figure out Instance
+    $InstanceName = $VM.Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Select -ExpandProperty Instance
+    If (!($Instance = $BeaterConfig.Instances[$InstanceName])) {
+        Write-BTRLog "Unable to find instance for $VmName" -Level Error
+        Return $False
     }Else{
-        $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-        $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+        Write-BTRLog "$VmName is member of $InstanceName." -Level Debug
     }
+
+    #Figure out Base Image
+    $BaseImageName = $VM.Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Select -ExpandProperty BaseImage
+    If (!($BaseImage = $BeaterConfig.BaseImages[$BaseImageName])) {
+        Write-BTRLog "Unable to find Base Image for $VmName" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "$VmName is based on $BaseImageName." -Level Debug
+    }
+
+    #Figure out password
+    $Error.Clear()
+    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    $LocalCreds = New-Object -TypeName System.Management.Automation.PSCredential("$VMName\$($Instance.AdminName)",$SecurePassword)
+    If ($Error) {
+        Write-BTRLog "Can't figure out local creditals. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }
+
+    $HostPath = $Instance.WorkingFolder
+    $HostFullPath = "$HostPath`\$Installer"
+    $VMPath = $Instance.VMTempFolder
+    $VMFullpath = "$VMPath`\$Installer"
 
     If (!($Name)) {
         $Name = $Installer
     }
-    "Installing $Name"
+    Write-BTRLog "Installing $Name" -Level Debug
     
     #Make sure destination folder exists
-    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         If (!(Test-Path $Using:VmPath)) {
             New-Item -Path $Using:VmPath -ItemType Directory -Force -Confirm:$False
         }
     }
+    If ($Error) {
+        Write-BTRLog "Can't create temp folder $VMPath on $VMName. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Created temp folder $VMName on $VMName." -Level Debug
+    }
 
-    #If the file doesn't exit on the VM, copy over or download installer
-    If (!(Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {Test-Path $Using:VMFullPath})) {
-        If (Test-Path $HostFullPath) {
+    #If the installer is not in working folder, download it
+    If (!(Test-Path $HostFullPath)) {
+        If ($WebLink) {
             $Error.Clear()
-            Copy-VMFile -VMName $VMName -SourcePath $HostFullPath -DestinationPath $VMFullpath -FileSource Host
+            Invoke-WebRequest -Uri $WebLink -OutFile $HostFullPath -ErrorAction SilentlyContinue
             If ($Error) {
-                Read-Host "Can't copy $Name to VM"
-                Return
+                Write-BTRLog "Can't download installer for $Name from $WebLink. Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
             }
         }Else{
-            If (!($WebLink)) {
-                Read-Host "If the installer isn't on the host, you must provide a download URL"
-                Return
+            Write-BTRLog "If the installer isn't on the host, you must provide a download URL" -Level Error
+            Return $False
+        }
+    }
+
+    #Copy installer
+    Write-BTRLog "Copying $HostFullPath to $VMFullpath on $VMName" -Level Progress 
+    $Error.Clear()
+    Hyper-V\Copy-VMFile -VMName $VMName -SourcePath $HostFullPath -DestinationPath $VMFullpath -FileSource Host -Force -ErrorAction SilentlyContinue
+    If ($Error) {
+        Write-BTRLog "Can't copy installer for $Name to $VMName" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
+        
+    #Run installer
+    $Error.Clear()
+    If ($MSI) {
+        Write-BTRLog "Running msiexec.exe /i $VMFullpath $Args /qn!" -Level Debug
+        Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
+            Start-Process "msiexec.exe"  -ArgumentList "/i $($Using:VMFullpath) $($Using:Args) /qn!" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+        }
+    }Else{
+        Write-BTRLog "Running $VMFullpath $Args" -Level Debug
+        Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
+            Start-Process -FilePath $Using:VMFullpath -ArgumentList $Using:Args -Wait -NoNewWindow -ErrorAction SilentlyContinue
+        }
+    }
+    If ($Error) {
+        Write-BTRLog "Install for $Name failed. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success" -Level Debug
+    }
+
+    If ($Tweaks) {
+        ForEach ($Tweak In $Tweaks) {
+            Write-BTRLog "Executing `"$Tweak`"" -Level Debug
+            $Error.Clear()
+            Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
+                . $Using:Tweak
+            }
+            If ($Error) {
+                Write-BTRLog "Failed to execute `"$Tweak`". Error: $($Error[0].Exception.Message)" -Level Error
+                Return $False
             }Else{
-                $Error.Clear()
-                Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
-                    Invoke-WebRequest -Uri $WebLink -OutFile $Using:VMFullPath -ErrorAction SilentlyContinue
-                }
-                If ($Error) {
-                    Read-Host "Can't download $Name"
-                    Return
-                }
+                Write-BTRLog "     Success!" -Level Debug
             }
         }
     }
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
-        Start-Process $Using:VMFullpath -ArgumentList $Using:Args  -Wait -NoNewWindow
-    }
-    If ($Error) {
-        Read-Host "Install failed"
-        Return
-    }
+
+    Return $True
 }
 
 Function Get-BtrNextIP {
@@ -740,7 +795,7 @@ Function Delete-BTRInstance {
             }
         }
 
-        If (!(Test-Path $($Instance.BasePath))) {
+        If (!(Test-Path $Instance.BasePath -ErrorAction SilentlyContinue)) {
             Write-BTRLog "$($Instance.BasePath) exists. Deleting" -Level Debug
             $Error.Clear()
             Remove-Item $($Instance.BasePath) -Recurse -Confirm:$False -Force | Out-Null
@@ -1467,7 +1522,6 @@ Function Configure-BTRBaseImage {
             Unregister-ScheduledTask -TaskName "GoogleUpdateTaskMachineUA" -Confirm:$False *>&1 | Out-Null
             Get-Service "gupdate" | Stop-Service -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
             Get-Service "gupdate" | Set-Service -StartupType Disabled -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
-            New-ItemProperty -Path "HKLM:\Software\Policies\Google\Chrome" -Name "HardwareAccelerationModeEnabled" -PropertyType "DWORD" -Value "1" -Force -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
         }
     
         #Installing NotePad++
@@ -1510,6 +1564,14 @@ Function Configure-BTRBaseImage {
 	    $Shortcut.Description = "Use your computer to connect to a computer that is located elsewhere and run programs or access files."
 	    $Shortcut.Save()
     }
+
+    ##Manually install Service Stack Update for Server 2016
+    #If (Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {[System.Environment]::OSVersion.Version} -eq 14393) {
+    #    Hyper-V\Copy-VMFile -Name $VMName -SourcePath "$($Instance.AppFolder)\windows10.0-kb4576750-x64_c4e0b5e0f0835db971a40058aa17ae9a0d2f1e2a.msu" -DestinationPath "C:\Temp\windows10.0-kb4576750-x64_c4e0b5e0f0835db971a40058aa17ae9a0d2f1e2a.msu" -CreateFullPath -FileSource Host -Force
+    #    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
+    #        
+    #}
+
     
     If ($BaseImage.UpdateSource) {
         Write-BTRLog "Configuring Updates" -Level Progress
@@ -1555,7 +1617,7 @@ Function Configure-BTRBaseImage {
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Get-WindowsUpdate -Confirm:$False -ErrorAction SilentlyContinue  *>&1 | Out-Null
     }
-
+    
     Write-BTRLog  "Installing updates" -Level Progress
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         Install-WindowsUpdate -AcceptAll -AutoReboot *>&1 | Out-Null
@@ -1675,14 +1737,13 @@ Function Prep-BTRBaseImage {
         Write-BTRLog "  Success!" -Level Debug
     }
 
-    Write-BTRLog "Deleting NICs" -Level Progress #2019 doens't do this and it created problems later
+    Write-BTRLog "Deleting NICs" -Level Progress #2019 doesn't do this and it creates problems later
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
-        Get-ChildItem -Path HKLM:\SYSTEM\CurrentControlSet\Control\Network\Interfaces | Remove-Item -Force -Recurse -Confirm:$False
+        Get-ChildItem -Path HKLM:\SYSTEM\CurrentControlSet\Control\Network\Interfaces -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -Confirm:$False -ErrorAction SilentlyContinue
     }
     If ($Error) {
-        Write-BTRLog "Failed to delete NICs. Error: $($Error[0].Exception.Message)" -Level Error
-        Return $False
+        Write-BTRLog "Failed to delete NICs (not always a bad thing. Error: $($Error[0].Exception.Message)" -Level Debug
     }Else{
         Write-BTRLog "  Success!" -Level Debug
     }
@@ -2566,44 +2627,69 @@ Function Tweak-BTRVMPostDeloy {
 
 Function Install-BTRExchange {
     Param (
-        [Parameter(Mandatory=$True)]$Instance,
         [Parameter(Mandatory=$True)][String]$VMName,
         [Parameter(Mandatory=$True)][String]$ExchangeISO,
+        [String]$UpdateISO,
         [String]$PrereqPath,
         [Int64]$StoreSizeGB = 100,
         [Int64]$LogSizeGB = 50
 
     )
 
-    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-    $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    #Make sure ISO exists
+    If (!(Test-Path $ExchangeISO)) {
+        Read-Host "Can't find $ExchangeISO!"
+        Return $False
+    }
+    
+    #Make sure VM Exists
+    If (!($VM = Hyper-V\Get-VM -Name $VMName)) {
+        Read-Host "$VMName does not exist"
+        Return $False
+    }
 
-    ##Make sure ISO exists
-    #If (!(Test-Path $ExchangeISO)) {
-    #    Read-Host "Can't find $ExchangeISO!"
-    #    Return
-    #}
-    #
-    ##Make sure VM Exists and is on
-    #If (!(Hyper-V\Get-VM -Name $VMName)) {
-    #    Read-Host "$VMName does not exist"
-    #    Return
-    #}ElseIf(!(Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {dir c:\})) {
-    #    Read-Host "Unable to connect to $VMName"
-    #    Return
-    #}
-    #
-    ##Make sure there isn't already Exchange in the domain
-    #If (Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {Get-AdGroup "Exchange Servers" -ErrorAction SilentlyContinue 2>&1 | Out-Null}) {
-    #    Read-Host "Looks like you already have an exchange organiztion in $($Instance.Name)"
-    #    Return
-    #}
-    #
+    #Figure out Instance
+    $InstanceName = $VM.Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Select -ExpandProperty Instance
+    If (!($Instance = $BeaterConfig.Instances[$InstanceName])) {
+        Write-BTRLog "Unable to find instance for $VmName" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "$VmName is member of $InstanceName." -Level Debug
+    }
+
+    #Figure out password
+    $Error.Clear()
+    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    $DomainCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    If ($Error) {
+        Write-BTRLog "Can't figure out local creditals. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }
+    
+    #Make sure there isn't already Exchange in the domain
+    If (Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {Try {Get-AdGroup "Exchange Servers" -ErrorAction SilentlyContinue 2>&1 | Out-Null}Catch{}}) {
+        Read-Host "Looks like you already have an exchange org in $($Instance.Name)"
+        Return $False
+    }
+
+    #Fix local key permissions
+    Write-BTRLog "Fixing permissions on C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys" -Level Debug
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
+        icacls C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys /grant SYSTEM:F /T
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to fix permission on machine keys" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!!" -Level Debug
+    }
+    
     #"Creating M: Drive"
     #$Path = "$($Instance.HDDPath)\$VMName-M.vhdx"
     #Hyper-V\New-VHD -Path $Path -SizeBytes 100GB -Dynamic
     #Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $Path
-    #Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
     #    Get-Disk | Where PartitionStyle -eq RAW  | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter M
     #    Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel "MailStore" -Confirm:$False -Force
     #}
@@ -2612,23 +2698,138 @@ Function Install-BTRExchange {
     #$Path = "$($Instance.HDDPath)\$VMName-L.vhdx"
     #Hyper-V\New-VHD -Path $Path -SizeBytes 50GB -Dynamic
     #Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $Path
-    #Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
     #    Get-Disk | Where PartitionStyle -eq RAW | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter L
     #    Format-Volume -DriveLetter L -FileSystem NTFS -NewFileSystemLabel "MailLog" -Confirm:$False -Force
     #}
+    #
+    #Write-BTRLog "Installing UCM 4.0." -Level Debug
+    #If (Install-BTRSofware -Name "Unified Communications Managed API 4.0 Runtime" -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" -Installer "UcmaRuntimeSetup.exe" -Args "-q") {
+    #    Write-BTRLog "     Success!!" -Level Debug
+    #}Else{
+    #    Write-BTRLog "Failed to install UCM 4.0." -Level Error
+    #    Return $False
+    #}
+    #
+    #Write-BTRLog "Installing VC++ Redistributable 2013." -Level Debug
+    #If (Install-BTRSofware -Name "Visual C++ Redistributable Packages for Visual Studio 2013" -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/E/6/2E61CFA4-993B-4DD4-91DA-3737CD5CD6E3/vcredist_x64.exe" -Installer "vcredist_x64.exe" -Args "/passive /norestart") {
+    #    Write-BTRLog "     Success!!" -Level Debug
+    #}Else{
+    #    Write-BTRLog "Failed to install UCM 4.0." -Level Error
+    #    Return $False
+    #}
+    #
+    #Write-BTRLog "Installing Pre-Requisites" -Level Debug
+    #$Components = @(
+	#	"NET-Framework-45-Features",
+	#	"RPC-over-HTTP-proxy",
+	#	"Web-Mgmt-Console",
+	#	"WAS-Process-Model",
+	#	"Web-Asp-Net45",
+	#	"Web-Basic-Auth",
+	#	"Web-Client-Auth",
+	#	"Web-Digest-Auth",
+	#	"Web-Dir-Browsing",
+	#	"Web-Dyn-Compression",
+	#	"Web-Http-Errors",
+	#	"Web-Http-Logging",
+	#	"Web-Http-Redirect",
+	#	"Web-Http-Tracing",
+	#	"Web-ISAPI-Ext",
+	#	"Web-ISAPI-Filter",
+	#	"Web-Lgcy-Mgmt-Console",
+	#	"Web-Metabase",
+	#	"Web-Mgmt-Console",
+	#	"Web-Mgmt-Service",
+	#	"Web-Net-Ext45",
+	#	"Web-Request-Monitor",
+	#	"Web-Server",
+	#	"Web-Stat-Compression",
+	#	"Web-Static-Content",
+	#	"Web-Windows-Auth",
+	#	"Web-WMI",
+	#	"Windows-Identity-Foundation"
+	#)
+    #ForEach ($Component In $Components) {
+    #    Write-BTRLog "   Installing $Component" -Level Debug
+    #    $Error.Clear()
+    #    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
+    #        Install-WindowsFeature $Using:Component -IncludeAllSubFeature -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
+    #    }
+    #    If ($Error) {
+    #        Write-BTRLog "Failed to install $Component. Error: $($Error[0].Exception.Message)." -Level Error
+    #        Return $False
+    #    }Else{
+    #        Write-BTRLog "      Sucess!" -Level Debug
+    #    }
+    #}
+    #
+    ##Mount ISO
+    #Write-BTRLog "Mounting EXchange ISO ($ExchangeISO)" -Level Progress
+    #$Error.Clear()
+    #Hyper-V\Add-VMDvdDrive -VMName $VMName -Path $ExchangeISO
+    #If ($Error) {
+    #    Write-BTRLog "Failed to mount ISO. Error: $($Error[0].Exception.Message)." -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "      Sucess!" -Level Debug
+    #}
 
-    Install-BTRSofware -Name ".net 4.8" -Instance $Instance -VMName $VMName -WebLink "https://go.microsoft.com/fwlink/?linkid=208863" -Installer "ndp48-x86-x64-allos-enu.exe" -Args "/q /norestart"
+    ##Run Exchange Installer
+    #Write-BTRLog "Running Exchange Setup" -Level Progress
+    #$Args = @(
+    #    "/IAcceptExchangeServerLicenseTerms",
+    #    "/Mode:Install",
+    #    "/Roles:mb,mt",
+    #    "/CustomerFeedbackEnabled:False",
+    #    "/DisableAMFiltering",
+    #    "/OrganizationName:$($Instance.Name)Org",
+    #    "/LogFolderPath:`"L:\Logs`"",
+    #    "/DbFilePath:`"M:\DataFiles`""
+    #)
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
+    #    Start-Process -FilePath "D:\setup.exe" -ArgumentList $Using:Args -Wait -ErrorAction SilentlyContinue
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to install Exchange. Error: $($Error[0].Exception.Message)." -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "      Sucess!" -Level Debug
+    #}
 
-    Install-BTRSofware -Name "Unified Communications Managed API 4.0 Runtime" -Instance $BeaterInstance -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" -Installer "UcmaRuntimeSetup.exe" -Args "/passive /norestart"
+    #Switch ISOs
+    If ($UpdateISO) {
+        Write-BTRLog "Change DVDs" -Level Progress
+        $Error.Clear()
+        Hyper-V\Get-VMDvdDrive -VMName $VMName -ErrorAction SilentlyContinue | Set-VMDvdDrive -Path $UpdateISO -Confirm:$False -ErrorAction SilentlyContinue
+        If ($Error) {
+            Write-BTRLog "Failed to mount update ISO. Error: $($Error[0].Exception.Message)." -Level Error
+            Return $False
+        }Else{
+            Write-BTRLog "      Sucess!" -Level Debug
+        }
 
-    Install-BTRSofware -Name "Visual C++ Redistributable Packages for Visual Studio 2013" -Instance $BeaterInstance -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/E/6/2E61CFA4-993B-4DD4-91DA-3737CD5CD6E3/vcredist_x64.exe" -Installer "vcredist_x64.exe" -Args "/passive /norestart"
+        #Run Exchange Cumulative Update
+        Write-BTRLog "Running Exchange Update" -Level Progress
+        $Args = @(
+            "/IAcceptExchangeServerLicenseTerms",
+            "/Mode:Upgrade"
+        )
+        $Error.Clear()
+        Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
+            Start-Process -FilePath "D:\setup.exe" -ArgumentList $Using:Args -Wait -ErrorAction SilentlyContinue
+        }
+        If ($Error) {
+            Write-BTRLog "Failed to update Exchange. Error: $($Error[0].Exception.Message)." -Level Error
+            Return $False
+        }Else{
+            Write-BTRLog "      Sucess!" -Level Debug
+        }
+    }
+ 
 
-
-    "Mounting EXchange ISO ($ExchangeISO)"
-    Hyper-V\Add-VMDvdDrive -VMName $VMName -Path $ExchangeISO
-    
-        
-
+    Return $True
 }
 
 Function Install-BTRSQL {
