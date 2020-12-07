@@ -845,10 +845,26 @@ Function New-cBTRDomain {
     }
            
     Write-BTRLog "Waiting for $VMName to reboot. (This always seems to take forever.)" -Level Progress
-    If (!(Wait-BTRVMOffline -VMName $VMName -Instance $Instance -MaxWaitTime 15 -JoinedDomain )) {
+    If (!(Wait-BTRVMReboot -VMName $VMName -Instance $Instance -MaxWaitTime 15 -JoinedDomain )) {
         Write-BTRLog "$VMName isn't rebooting." -Level Error
         Return $False
     }
+
+    #The next part fails if the boot up isn't complete, so wait for that
+    Write-BTRLog "Waiting for boot up to complelety finish" -Level Progress
+    $GiveUpAt = (Get-Date).AddMinutes(15)
+    Do {
+        If ((Invoke-Command -VMName $VMName -Credential $Creds -ScriptBlock {Get-WmiObject Win32_ComputerSystem | Select -ExpandProperty UserName}) -like "*Administrator") {
+            Write-BTRLog "Boot up complete!" -Level Progress
+            Break
+        }Else{
+            If ((Get-Date) -gt $GiveUpAt) {
+                Write-BTRLog "$VMName never booted.  Giving up!" -Level Error
+            }Else{
+                Start-Sleep -Seconds 5
+            }
+        }
+    } While ($True)
 
     Write-BTRLog "Configuring domain" -Level Progress
     If (!(Configure-BTRDomain -Instance $Instance)) {
@@ -863,7 +879,7 @@ Function New-cBTRDomain {
             Return
         }
     }   
-
+    Return $True
 }
 
 Function New-cBTRBaseImage {
@@ -954,7 +970,7 @@ Function New-cBTRBaseImage {
         Write-Host "Base image deployement is done.  Go ahead and customize it."
         Read-Host "Hit any key to continue"
     }
-
+    
     #Prep Base image
     Write-BtrLog "Prepping base image" -level Progress
     If (Prep-BTRBaseImage -Instance $Instance -BaseImage $NewBaseImage) {
@@ -975,6 +991,52 @@ Function New-cBTRBaseImage {
 
     Return $True
 }
+
+Function Delete-cBTRBaseImage {
+    Param (
+        [Parameter(Mandatory=$True)][HashTable]$Config
+    )
+
+    If (!($DeleteMe = Select-cBTRBaseImage -Config $BeaterConfig -Prompt "Select Base Image to delete")) {
+        Write-BTRLog "You must select a base image to continue." -Level Error
+        Return $False
+    }
+    Write-BTRLog "Will delete $DeleteMe" -Level Debug
+
+    If (Get-VM -ErrorAction SilentlyContinue | Select -ExpandProperty Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Where BaseImage -Like $DeleteMe) {
+        Write-BTRLog "Base Image $DeleteMe is still in use." -Level Error
+        Return $False
+    }
+
+    $BaseImage = $Config.BaseImages[$DeleteMe]
+    $Path =$BaseImage.BaseImage
+
+    Write-BTRLog "Removing $Path." -Level Debug
+    $Error.Clear()
+    Remove-Item $Path -Force -Confirm:$False -ErrorAction SilentlyContinue
+    If ($Error) {
+        Write-BTRLog "Failed to delete $Path.. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success!" -Level Debug
+    }
+
+    Write-BTRLog "Removing $DeleteMe" -Level Debug
+    $Config.BaseImages.remove($DeleteMe)
+
+    $Error.Clear()
+    Remove-Item -Path "$RegRoot\BaseImages\$DeleteMe" -Recurse -Force -Confirm:$False -ErrorAction SilentlyContinue
+    If ($Error) {
+        Write-BTRLog "Failed to remove base image $DeleteMe from registry. Error: $($Error[0].Exception.Message)." -Level Error
+        $Error.Clear()
+    }Else{
+        Write-BTRLog "Completely removed $DeleteMe" -Level Progress
+    }
+
+}
+
+
+
 
 
 #region ServerSetup
@@ -1085,6 +1147,8 @@ Do {
             }
         }7{
             #Delete base image
+            Delete-cBTRBaseImage -Config $BeaterConfig
+            
         }8{
             Return
         }

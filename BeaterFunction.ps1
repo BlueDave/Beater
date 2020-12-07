@@ -1022,6 +1022,7 @@ Function Create-BTRISO {
                 <ImageInstall>
                     <OSImage>
                         <InstallFrom>
+                            <Path>D:\sources\install.wim</Path>
                             <MetaData wcm:action="add">
                                 <Key>/IMAGE/INDEX</Key>
                                 <Value>' + $BaseImage.ImageIndex + '</Value>
@@ -2411,10 +2412,11 @@ Function Add-BtrDNSRecord {
         Add-DnsServerResourceRecordA -ZoneName $Using:Instance.DomainName -Name $Using:RecordName -IPv4Address $Using:IPAddress -CreatePtr
     }
     If ($Error) {
-        "Unable to set static IP in DNS"
-        Read-Host "Hit key to continue"
-        Return
+        Write-BTRLog "Failed to create DNS record. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
     }
+
+    Return $True
 }
 
 Function Apply-BTRVMCustomConfig {
@@ -2685,118 +2687,118 @@ Function Install-BTRExchange {
         Write-BTRLog "     Success!!" -Level Debug
     }
     
-    #"Creating M: Drive"
-    #$Path = "$($Instance.HDDPath)\$VMName-M.vhdx"
-    #Hyper-V\New-VHD -Path $Path -SizeBytes 100GB -Dynamic
-    #Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $Path
-    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-    #    Get-Disk | Where PartitionStyle -eq RAW  | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter M
-    #    Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel "MailStore" -Confirm:$False -Force
-    #}
-    #
-    #"Creating L: Drive"
-    #$Path = "$($Instance.HDDPath)\$VMName-L.vhdx"
-    #Hyper-V\New-VHD -Path $Path -SizeBytes 50GB -Dynamic
-    #Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $Path
-    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-    #    Get-Disk | Where PartitionStyle -eq RAW | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter L
-    #    Format-Volume -DriveLetter L -FileSystem NTFS -NewFileSystemLabel "MailLog" -Confirm:$False -Force
-    #}
-    #
-    #Write-BTRLog "Installing UCM 4.0." -Level Debug
-    #If (Install-BTRSofware -Name "Unified Communications Managed API 4.0 Runtime" -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" -Installer "UcmaRuntimeSetup.exe" -Args "-q") {
-    #    Write-BTRLog "     Success!!" -Level Debug
-    #}Else{
-    #    Write-BTRLog "Failed to install UCM 4.0." -Level Error
-    #    Return $False
-    #}
-    #
-    #Write-BTRLog "Installing VC++ Redistributable 2013." -Level Debug
-    #If (Install-BTRSofware -Name "Visual C++ Redistributable Packages for Visual Studio 2013" -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/E/6/2E61CFA4-993B-4DD4-91DA-3737CD5CD6E3/vcredist_x64.exe" -Installer "vcredist_x64.exe" -Args "/passive /norestart") {
-    #    Write-BTRLog "     Success!!" -Level Debug
-    #}Else{
-    #    Write-BTRLog "Failed to install UCM 4.0." -Level Error
-    #    Return $False
-    #}
-    #
-    #Write-BTRLog "Installing Pre-Requisites" -Level Debug
-    #$Components = @(
-	#	"NET-Framework-45-Features",
-	#	"RPC-over-HTTP-proxy",
-	#	"Web-Mgmt-Console",
-	#	"WAS-Process-Model",
-	#	"Web-Asp-Net45",
-	#	"Web-Basic-Auth",
-	#	"Web-Client-Auth",
-	#	"Web-Digest-Auth",
-	#	"Web-Dir-Browsing",
-	#	"Web-Dyn-Compression",
-	#	"Web-Http-Errors",
-	#	"Web-Http-Logging",
-	#	"Web-Http-Redirect",
-	#	"Web-Http-Tracing",
-	#	"Web-ISAPI-Ext",
-	#	"Web-ISAPI-Filter",
-	#	"Web-Lgcy-Mgmt-Console",
-	#	"Web-Metabase",
-	#	"Web-Mgmt-Console",
-	#	"Web-Mgmt-Service",
-	#	"Web-Net-Ext45",
-	#	"Web-Request-Monitor",
-	#	"Web-Server",
-	#	"Web-Stat-Compression",
-	#	"Web-Static-Content",
-	#	"Web-Windows-Auth",
-	#	"Web-WMI",
-	#	"Windows-Identity-Foundation"
-	#)
-    #ForEach ($Component In $Components) {
-    #    Write-BTRLog "   Installing $Component" -Level Debug
-    #    $Error.Clear()
-    #    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
-    #        Install-WindowsFeature $Using:Component -IncludeAllSubFeature -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
-    #    }
-    #    If ($Error) {
-    #        Write-BTRLog "Failed to install $Component. Error: $($Error[0].Exception.Message)." -Level Error
-    #        Return $False
-    #    }Else{
-    #        Write-BTRLog "      Sucess!" -Level Debug
-    #    }
-    #}
-    #
-    ##Mount ISO
-    #Write-BTRLog "Mounting EXchange ISO ($ExchangeISO)" -Level Progress
-    #$Error.Clear()
-    #Hyper-V\Add-VMDvdDrive -VMName $VMName -Path $ExchangeISO
-    #If ($Error) {
-    #    Write-BTRLog "Failed to mount ISO. Error: $($Error[0].Exception.Message)." -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "      Sucess!" -Level Debug
-    #}
+    "Creating M: Drive"
+    $Path = "$($Instance.HDDPath)\$VMName-M.vhdx"
+    Hyper-V\New-VHD -Path $Path -SizeBytes 100GB -Dynamic
+    Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $Path
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Get-Disk | Where PartitionStyle -eq RAW  | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter M
+        Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel "MailStore" -Confirm:$False -Force
+    }
+    
+    "Creating L: Drive"
+    $Path = "$($Instance.HDDPath)\$VMName-L.vhdx"
+    Hyper-V\New-VHD -Path $Path -SizeBytes 50GB -Dynamic
+    Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $Path
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Get-Disk | Where PartitionStyle -eq RAW | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter L
+        Format-Volume -DriveLetter L -FileSystem NTFS -NewFileSystemLabel "MailLog" -Confirm:$False -Force
+    }
+    
+    Write-BTRLog "Installing UCM 4.0." -Level Debug
+    If (Install-BTRSofware -Name "Unified Communications Managed API 4.0 Runtime" -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" -Installer "UcmaRuntimeSetup.exe" -Args "-q") {
+        Write-BTRLog "     Success!!" -Level Debug
+    }Else{
+        Write-BTRLog "Failed to install UCM 4.0." -Level Error
+        Return $False
+    }
+    
+    Write-BTRLog "Installing VC++ Redistributable 2013." -Level Debug
+    If (Install-BTRSofware -Name "Visual C++ Redistributable Packages for Visual Studio 2013" -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/E/6/2E61CFA4-993B-4DD4-91DA-3737CD5CD6E3/vcredist_x64.exe" -Installer "vcredist_x64.exe" -Args "/passive /norestart") {
+        Write-BTRLog "     Success!!" -Level Debug
+    }Else{
+        Write-BTRLog "Failed to install UCM 4.0." -Level Error
+        Return $False
+    }
+    
+    Write-BTRLog "Installing Pre-Requisites" -Level Debug
+    $Components = @(
+		"NET-Framework-45-Features",
+		"RPC-over-HTTP-proxy",
+		"Web-Mgmt-Console",
+		"WAS-Process-Model",
+		"Web-Asp-Net45",
+		"Web-Basic-Auth",
+		"Web-Client-Auth",
+		"Web-Digest-Auth",
+		"Web-Dir-Browsing",
+		"Web-Dyn-Compression",
+		"Web-Http-Errors",
+		"Web-Http-Logging",
+		"Web-Http-Redirect",
+		"Web-Http-Tracing",
+		"Web-ISAPI-Ext",
+		"Web-ISAPI-Filter",
+		"Web-Lgcy-Mgmt-Console",
+		"Web-Metabase",
+		"Web-Mgmt-Console",
+		"Web-Mgmt-Service",
+		"Web-Net-Ext45",
+		"Web-Request-Monitor",
+		"Web-Server",
+		"Web-Stat-Compression",
+		"Web-Static-Content",
+		"Web-Windows-Auth",
+		"Web-WMI",
+		"Windows-Identity-Foundation"
+	)
+    ForEach ($Component In $Components) {
+        Write-BTRLog "   Installing $Component" -Level Debug
+        $Error.Clear()
+        Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
+            Install-WindowsFeature $Using:Component -IncludeAllSubFeature -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
+        }
+        If ($Error) {
+            Write-BTRLog "Failed to install $Component. Error: $($Error[0].Exception.Message)." -Level Error
+            Return $False
+        }Else{
+            Write-BTRLog "      Sucess!" -Level Debug
+        }
+    }
+    
+    #Mount ISO
+    Write-BTRLog "Mounting EXchange ISO ($ExchangeISO)" -Level Progress
+    $Error.Clear()
+    Hyper-V\Add-VMDvdDrive -VMName $VMName -Path $ExchangeISO
+    If ($Error) {
+        Write-BTRLog "Failed to mount ISO. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "      Sucess!" -Level Debug
+    }
 
-    ##Run Exchange Installer
-    #Write-BTRLog "Running Exchange Setup" -Level Progress
-    #$Args = @(
-    #    "/IAcceptExchangeServerLicenseTerms",
-    #    "/Mode:Install",
-    #    "/Roles:mb,mt",
-    #    "/CustomerFeedbackEnabled:False",
-    #    "/DisableAMFiltering",
-    #    "/OrganizationName:$($Instance.Name)Org",
-    #    "/LogFolderPath:`"L:\Logs`"",
-    #    "/DbFilePath:`"M:\DataFiles`""
-    #)
-    #$Error.Clear()
-    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
-    #    Start-Process -FilePath "D:\setup.exe" -ArgumentList $Using:Args -Wait -ErrorAction SilentlyContinue
-    #}
-    #If ($Error) {
-    #    Write-BTRLog "Failed to install Exchange. Error: $($Error[0].Exception.Message)." -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "      Sucess!" -Level Debug
-    #}
+    #Run Exchange Installer
+    Write-BTRLog "Running Exchange Setup" -Level Progress
+    $Args = @(
+        "/IAcceptExchangeServerLicenseTerms",
+        "/Mode:Install",
+        "/Roles:mb,mt",
+        "/CustomerFeedbackEnabled:False",
+        "/DisableAMFiltering",
+        "/OrganizationName:$($Instance.Name)Org",
+        "/LogFolderPath:`"L:\Logs`"",
+        "/DbFilePath:`"M:\DataFiles`""
+    )
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
+        Start-Process -FilePath "D:\setup.exe" -ArgumentList $Using:Args -Wait -ErrorAction SilentlyContinue
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to install Exchange. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "      Sucess!" -Level Debug
+    }
 
     #Switch ISOs
     If ($UpdateISO) {
