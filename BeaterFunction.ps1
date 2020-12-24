@@ -1462,7 +1462,45 @@ Function Configure-BTRBaseImage {
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
         If ($(Get-WmiObject Win32_OperatingSystem -ErrorAction SilentlyContinue ).ProductType -ne 1) {
-            Install-WindowsFeature -IncludeAllSubFeature RSAT -ErrorAction SilentlyContinue *>&1 | Out-Null
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Feature-Tools-BitLocker
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Feature-Tools-BitLocker-RemoteAdminTool
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Feature-Tools-BitLocker-BdeAducExt
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-DataCenterBridging-LLDP-Tools
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Clustering
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Clustering-Mgmt
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Clustering-PowerShell
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Clustering-AutomationServer
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Clustering-CmdInterface
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-NLB
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Shielded-VM-Tools
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-SNMP
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Storage-Replica
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-WINS
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-AD-Tools
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-AD-PowerShell
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-ADDS
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-AD-AdminCenter
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-ADDS-Tools
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-ADLDS
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Hyper-V-Tools
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-RDS-Licensing-Diagnosis-UI
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-ADCS
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-ADCS-Mgmt
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Online-Responder
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-ADRMS
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-DHCP
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-DNS-Server
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Fax
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-File-Services
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-DFS-Mgmt-Con
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-FSRM-Mgmt
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-NFS-Admin
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-NPAS
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-Print-Services
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-RemoteAccess
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-RemoteAccess-Mgmt
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-RemoteAccess-PowerShell
+            Install-WindowsFeature -IncludeAllSubFeature RSAT-VA-Tools -ErrorAction SilentlyContinue *>&1 | Out-Null
             Install-WindowsFeature -IncludeAllSubFeature GPMC -ErrorAction SilentlyContinue *>&1 | Out-Null
         }Else{
             #TODO: Figure out install for Win10
@@ -1566,14 +1604,6 @@ Function Configure-BTRBaseImage {
 	    $Shortcut.Save()
     }
 
-    ##Manually install Service Stack Update for Server 2016
-    #If (Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {[System.Environment]::OSVersion.Version} -eq 14393) {
-    #    Hyper-V\Copy-VMFile -Name $VMName -SourcePath "$($Instance.AppFolder)\windows10.0-kb4576750-x64_c4e0b5e0f0835db971a40058aa17ae9a0d2f1e2a.msu" -DestinationPath "C:\Temp\windows10.0-kb4576750-x64_c4e0b5e0f0835db971a40058aa17ae9a0d2f1e2a.msu" -CreateFullPath -FileSource Host -Force
-    #    Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
-    #        
-    #}
-
-    
     If ($BaseImage.UpdateSource) {
         Write-BTRLog "Configuring Updates" -Level Progress
         Invoke-Command -VMName $VMName -Credential $LocalCreds -ScriptBlock {
@@ -2674,18 +2704,18 @@ Function Install-BTRExchange {
         Return $False
     }
 
-    #Fix local key permissions
-    Write-BTRLog "Fixing permissions on C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys" -Level Debug
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
-        icacls C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys /grant SYSTEM:F /T
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to fix permission on machine keys" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "     Success!!" -Level Debug
-    }
+    ##Fix local key permissions
+    #Write-BTRLog "Fixing permissions on C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys" -Level Debug
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
+    #    icacls C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys /grant SYSTEM:F /T
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to fix permission on machine keys" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "     Success!!" -Level Debug
+    #}
     
     "Creating M: Drive"
     $Path = "$($Instance.HDDPath)\$VMName-M.vhdx"
@@ -2767,7 +2797,7 @@ Function Install-BTRExchange {
     }
     
     #Mount ISO
-    Write-BTRLog "Mounting EXchange ISO ($ExchangeISO)" -Level Progress
+    Write-BTRLog "Mounting Exchange ISO ($ExchangeISO)" -Level Progress
     $Error.Clear()
     Hyper-V\Add-VMDvdDrive -VMName $VMName -Path $ExchangeISO
     If ($Error) {
@@ -2800,8 +2830,10 @@ Function Install-BTRExchange {
         Write-BTRLog "      Sucess!" -Level Debug
     }
 
-    #Switch ISOs
+    #Run Cumulative Update
     If ($UpdateISO) {
+
+        #Switch ISOs
         Write-BTRLog "Change DVDs" -Level Progress
         $Error.Clear()
         Hyper-V\Get-VMDvdDrive -VMName $VMName -ErrorAction SilentlyContinue | Set-VMDvdDrive -Path $UpdateISO -Confirm:$False -ErrorAction SilentlyContinue

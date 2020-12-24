@@ -90,7 +90,13 @@ Function Get-cBTRInstanceConfig {
         If (!($New)) {
             $New = $Default
         }
-    }Until (($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{3,15}$") -and (!($BeaterConfig.Instances[$New])))
+        $Exists = $False
+        If ($BeaterConfig.Instances) {
+            If ($BeaterConfig.Instances[$New]) {
+                $Exists = $True
+            }
+        }
+    }Until (($New -Match "^(?![0-9]{1,15}$)[a-zA-Z0-9-]{3,15}$") -and (!($Exists)))
     $NewInstance.Name = $New
 
     #Set AppFolder
@@ -123,16 +129,6 @@ Function Get-cBTRInstanceConfig {
     }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
     $NewInstance.WorkingFolder = $New
 
-    #Set VM Folder
-    $Default = "$($Config.RootPath)\$($NewInstance.Name)\Virtual Machines"
-    Do {
-        $New = Read-Host "Path to VM Folder? [$Default]"
-        If (!($New)) {
-            $New = $Default
-        }
-    }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
-    $NewInstance.VMPath = $New
-
     #Set Base Folder
     $Default = "$($Config.RootPath)\$($NewInstance.Name)"
     Do {
@@ -142,6 +138,16 @@ Function Get-cBTRInstanceConfig {
         }
     }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
     $NewInstance.BasePath = $New
+
+    #Set VM Folder
+    $Default = "$($NewInstance.BasePath)\Virtual Machines"
+    Do {
+        $New = Read-Host "Path to VM Folder? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until ($New -Match "^(?:[\w]\:|\\)(\\[a-z_\-\s0-9\.]+)+$")
+    $NewInstance.VMPath = $New
 
     #Set HDD Folder
     $Default = "$($NewInstance.BasePath)\Virtual Hard Disks"
@@ -256,7 +262,17 @@ Function Get-cBTRInstanceConfig {
     }Until ($New -Match "(?=^.{10,20}$)((?=.*\d)(?=.*[A-Z])(?=.*[a-z])|(?=.*\d)(?=.*[^A-Za-z0-9])(?=.*[a-z])|(?=.*[^A-Za-z0-9])(?=.*[A-Z])(?=.*[a-z])|(?=.*\d)(?=.*[A-Z])(?=.*[^A-Za-z0-9]))^.*")
     $NewInstance.AdminPassword = $New
 
-    If ((Read-Host "Do you want to configure a domain for $($NewInstance.Name) [Y]") -ne "Y") {
+    #Set Time Zone
+    $Default = "Central Standard Time"
+    Do {
+        $New = Read-Host "Time Zone? [$Default]"
+        If (!($New)) {
+            $New = $Default
+        }
+    }Until (Get-TimeZone -ListAvailable | Where Standardname -eq $New)
+    $NewInstance.TimeZone = $New
+
+    If ((Read-Host "Do you want to configure a domain for $($NewInstance.Name) [Y]") -ne "N") {
         #Set Domain Name
         $Default = "$($NewInstance.Name).local"
         Do {
@@ -320,7 +336,6 @@ Function Get-cBTRInstanceConfig {
             $NewInstance.UseDHCP = $False
         }
 
-        
         If ($NewInstance.UseDHCP -eq 'Y') {
             #Set DHCP Start
             $Default = "100"
@@ -343,16 +358,6 @@ Function Get-cBTRInstanceConfig {
             $NewInstance.DHCPStop = $New
         }
     }
-
-    #Set Time Zone
-    $Default = "Central Standard Time"
-    Do {
-        $New = Read-Host "Time Zone? [$Default]"
-        If (!($New)) {
-            $New = $Default
-        }
-    }Until (Get-TimeZone -ListAvailable | Where Standardname -eq $New)
-    $NewInstance.TimeZone = $New
 
     Return $NewInstance
 }
@@ -745,6 +750,18 @@ Function New-cBTRInstance {
         Return $False
     }
 
+    #Write instance to registry
+    If (!($BeaterConfig.Instances)) {
+        $BeaterConfig.Add("Instances",@{})
+    }
+    $BeaterConfig.Instances.Add($NewInstance.Name, $NewInstance)
+    If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
+        Write-BTRLog "Successfully wrote new instance to registry" -Level Progress
+    }Else{
+        Write-BTRLog "Failed to write new instance to registry. Error: $($Error[0].Exception.Message)." -Level Error
+        Return $False
+    }
+
     #If the instance is domain enabled, create the domain
     If ($NewInstance.DomainName) {
 
@@ -776,15 +793,6 @@ Function New-cBTRInstance {
         }
     }Else{
         Write-BTRLog "Domain was not configured, will not setup" -Level Debug
-    }
-        
-    #Write instance to registry
-    $BeaterConfig.Instances.Add($NewInstance.Name, $NewInstance)
-    If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
-        Write-BTRLog "Successfully wrote new instance to registry" -Level Progress
-    }Else{
-        Write-BTRLog "Failed to write new instance to registry. Error: $($Error[0].Exception.Message)." -Level Error
-        Return $False
     }
 
     Return $True
@@ -981,6 +989,9 @@ Function New-cBTRBaseImage {
     }
 
     #Write BaseImage to registry
+    If (!($BeaterConfig.BaseImages)) {
+        $BeaterConfig.Add("BaseImages",@{})
+    }
     $BeaterConfig.BaseImages.Add($NewBaseImage.Name, $NewBaseImage)
     If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
         Write-BTRLog "Successfully wrote new Base Image to registry" -Level Progress
@@ -1086,7 +1097,7 @@ If (Write-BTRToRegistry -Item $BeaterConfig -Root $RegRoot) {
 
 
 
-
+Clear
 Do {
     Write-Host "What do you want to do now"
     Write-Host "   1) Show Environment details"
@@ -1123,20 +1134,23 @@ Do {
             New-cBTRInstance -Config $BeaterConfig
         }5{
             #Delete Instance
-            $DeleteMe = Select-cBTRInstance -Config $BeaterConfig
-            If (Delete-BTRInstance -Instance $BeaterConfig.Instances[$DeleteMe] -DeleteVMs -DeleteFolders) {
-                Write-BTRLog "Deleted Instance $DeleteMe" -Level Progress
-                $BeaterConfig.Instances.Remove($DeleteMe)
-                $Error.Clear()
-                Remove-Item -Path "$RegRoot\Instances\$DeleteMe" -Recurse -Force -Confirm:$False -ErrorAction SilentlyContinue
-                If ($Error) {
-                    Write-BTRLog "Failed to remove instance $DeleteMe from registry. Error: $($Error[0].Exception.Message)." -Level Error
+            If($DeleteMe = Select-cBTRInstance -Config $BeaterConfig) {
+                If (Delete-BTRInstance -Instance $BeaterConfig.Instances[$DeleteMe] -DeleteVMs -DeleteFolders) {
+                    Write-BTRLog "Deleted Instance $DeleteMe" -Level Progress
+                    $BeaterConfig.Instances.Remove($DeleteMe)
                     $Error.Clear()
+                    Remove-Item -Path "$RegRoot\Instances\$DeleteMe" -Recurse -Force -Confirm:$False -ErrorAction SilentlyContinue
+                    If ($Error) {
+                        Write-BTRLog "Failed to remove instance $DeleteMe from registry. Error: $($Error[0].Exception.Message)." -Level Error
+                        $Error.Clear()
+                    }Else{
+                        Write-BTRLog "Completely removed $DeleteMe" -Level Progress
+                    }
                 }Else{
-                    Write-BTRLog "Completely removed $DeleteMe" -Level Progress
+                    Write-BTRLog "Failed to Delete $DeleteMe" -Level Error
                 }
             }Else{
-                Write-BTRLog "Failed to Delete $DeleteMe" -Level Error
+                Write-BTRLog "No instances to delete!" -Level Error
             }
         }6{
             #Create base image
