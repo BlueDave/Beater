@@ -2703,19 +2703,6 @@ Function Install-BTRExchange {
         Read-Host "Looks like you already have an exchange org in $($Instance.Name)"
         Return $False
     }
-
-    ##Fix local key permissions
-    #Write-BTRLog "Fixing permissions on C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys" -Level Debug
-    #$Error.Clear()
-    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
-    #    icacls C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys /grant SYSTEM:F /T
-    #}
-    #If ($Error) {
-    #    Write-BTRLog "Failed to fix permission on machine keys" -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "     Success!!" -Level Debug
-    #}
     
     "Creating M: Drive"
     $Path = "$($Instance.HDDPath)\$VMName-M.vhdx"
@@ -2815,9 +2802,7 @@ Function Install-BTRExchange {
         "/Roles:mb,mt",
         "/CustomerFeedbackEnabled:False",
         "/DisableAMFiltering",
-        "/OrganizationName:$($Instance.Name)Org",
-        "/LogFolderPath:`"L:\Logs`"",
-        "/DbFilePath:`"M:\DataFiles`""
+        "/OrganizationName:$($Instance.Name)Org"
     )
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 

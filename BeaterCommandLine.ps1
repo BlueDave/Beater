@@ -810,22 +810,22 @@ Function New-cBTRDomain {
         Write-BTRLog "Domain Controller for $($Instance.Name) instance alreadyexists." -Level Error
         Return $False
     }
-
+    
     Write-BTRLog "Creating $VMName" -Level Progress
     If (!(New-BTRVMFromTemplate -Instance $Instance -VmName $VMName -BaseImage $BaseImage)) {
         Write-BTRLog "Failed to make VM $VMName" -Level Error
         Return $False
     }
-
+    
     Write-BTRLog "Waiting 3 seconds for VM creation to finish" -Level Debug
     Start-Sleep 3
-
+    
     Write-BTRLog "Writing Config to $VMName" -Level Progress
     If (!(Apply-BTRVMCustomConfig -VMName $VMName -Instance $Instance -IpAddress $Instance.DomainControllerIP -JoinDomain $False -BaseImage $BaseImage)) {
         Write-BTRLog "Failed to apply custom config to DC" -Level Error
         Return $False
     }
-
+    
     Write-BTRLog "Staring $VMName" -Level Progress
     $Error.Clear()
     Hyper-V\Start-VM -VMName $VMName -ErrorAction SilentlyContinue
@@ -845,7 +845,7 @@ Function New-cBTRDomain {
         Write-BTRLog "Failed to apply post deploy tweaks." -Level Error
         Return $False
     }
-
+    
     Write-BTRLog "Installing DC role on $VMName." -Level Progress
     If (!(Install-BTRDomain -Instance $Instance)) {
         Write-BTRLog "Unable to install domain role." -Level Error
@@ -857,6 +857,9 @@ Function New-cBTRDomain {
         Write-BTRLog "$VMName isn't rebooting." -Level Error
         Return $False
     }
+
+    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    $Creds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName, $SecurePassword)
 
     #The next part fails if the boot up isn't complete, so wait for that
     Write-BTRLog "Waiting for boot up to complelety finish" -Level Progress
