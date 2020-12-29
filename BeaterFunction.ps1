@@ -2615,6 +2615,7 @@ Function Apply-BTRVMCustomConfig {
     Return $True
 }
 
+
 Function Tweak-BTRVMPostDeloy {
     Param (
         [Parameter(Mandatory=$True)]$Instance,
@@ -2703,7 +2704,12 @@ Function Install-BTRExchange {
         Read-Host "Looks like you already have an exchange org in $($Instance.Name)"
         Return $False
     }
-    
+
+    #Disable Realtime Scan.  If you don't do this it quatruples the time to complete
+    Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+        Set-MpPreference -DisableRealtimeMonitoring $True -ErrorAction SilentlyContinue 2>&1 | Out-Null
+    }
+
     "Creating M: Drive"
     $Path = "$($Instance.HDDPath)\$VMName-M.vhdx"
     Hyper-V\New-VHD -Path $Path -SizeBytes 100GB -Dynamic
@@ -2846,10 +2852,116 @@ Function Install-BTRExchange {
             Write-BTRLog "      Sucess!" -Level Debug
         }
     }
- 
+
+    #Eject ISO
+    Get-VMDvdDrive -VMName $VMName -ErrorAction SilentlyContinue | Remove-VMDvdDrive -ErrorAction SilentlyContinue
+
+    #Enable Realtime Scan
+    Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+        Set-MpPreference -DisableRealtimeMonitoring $False -ErrorAction SilentlyContinue 2>&1 | Out-Null
+    }
+
+    #Disable Cyphers
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC4 128/128" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC4 40/128" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC4 56/128" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\Triple DES 168" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\Triple DES 168/168" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Client" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Client" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Server" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Server" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client" /v DisabledByDefault /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client" /v Enabled /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server" /v DisabledByDefault /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server" /v Enabled /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\Software\Microsoft\.NETFramework\v4.0.30319" /v SchUseStrongCrypto /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\Software\Microsoft\.NETFramework\v4.0.30319" /v SystemDefaultTlsVersions /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+    }
+
 
     Return $True
 }
+
+Function Configure-BTRExchange {
+    Param (
+        [Parameter(Mandatory=$True)][String]$VMName
+    )
+
+    #Make sure VM Exists
+    If (!($VM = Hyper-V\Get-VM -Name $VMName)) {
+        Read-Host "$VMName does not exist"
+        Return $False
+    }
+
+    #Figure out Instance
+    $InstanceName = $VM.Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Select -ExpandProperty Instance
+    If (!($Instance = $BeaterConfig.Instances[$InstanceName])) {
+        Write-BTRLog "Unable to find instance for $VmName" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "$VmName is member of $InstanceName." -Level Debug
+    }
+
+    #Figure out password
+    $Error.Clear()
+    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    $DomainCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    If ($Error) {
+        Write-BTRLog "Can't figure out local creditals. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }
+
+    #Start PS Session
+    $Error.Clear()
+    $PSS = New-PSSession -VMName $VMName -Credential $DomainCreds
+    If ($Error) {
+        Write-BTRLog "Unable to connect establish PS session with $VMName" -Level Error
+    }Else{
+        Write-BTRLog "Connected PS session to $VMName" -Level Progress
+    }
+
+    #Import Exchange managment module
+    $Error.Clear()
+    Invoke-Command -Session $PSS  -ScriptBlock {
+        If (!(Get-PSSnapin | Where Name -eq "Microsoft.Exchange.Management.PowerShell.SnapIn")) {
+            Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
+        }
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to import Exchange management module" -Level Error
+        Return $False
+    }Else{
+       Write-BTRLog "Exchange PS plugin loaded." -Level Debug
+    }
+
+    #Move Mailbox to M: and L: drives
+    Write-BTRLog "Moving mail database to L: and M: drives" -Level Progress
+    Invoke-Command -Session $PSS -ScriptBlock {
+        Get-MailBoxDatabase -Identity * | ForEach {Move-DatabasePath -Identity $_.Name -EdbFilePath "M:\$($_.Name)\$($_.Name).edb" -logFolderPath "L:\$($_.Name)\" -Force -ErrorAction SilentlyContinue -Confirm:$False}
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to move database files" -Level Error
+        Return $False
+    }Else{
+       Write-BTRLog "   Success!" -Level Debug
+    }
+
+    #Create MX record
+    Write-BTRLog
+    Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+        Add-DnsServerResourceRecordMX -Preference 10 -Name "." -MailExchange "$Using:VMName.$($Using:Instance.DomainName)" -ZoneName $Using:Instance.DomainName
+    }
+
+
+    Return $True
+}
+
 
 Function Install-BTRSQL {
     Param (
@@ -2973,26 +3085,134 @@ Function New-BtrUsers {
         [Parameter(Mandatory=$True)][String]$NamingPattern,
         [Int64]$NumberOfUsers = 1,
         [String]$Password,
-        [Switch]$CreateMailbox
+        [Switch]$CreateMailbox,
+        [String]$OU
     )
 
     Write-BTRLog "Enterning New-BtrUser" -Level Debug
     
+    $VMName = $Instance.DomainController
+    If (!($OU)) {
+        $OU = "$($Instance.Name)Users"
+    }
+
     If (!($Password)) {
         Write-BTRLog "Password not specified, using default Instance password" -Level Debug
         $Password = $Instance.AdminPassword
     }
 
-    Write-BTRLog "Checking if $Name Exists"
-    If (Invoke-Command -VMName $Instance.DomainController -Credential $Using:Instance.DomainCreds -ScriptBlock { Get-ADUser $Using:Name }) {
-        Write-BTRLog "$Name already exists" -Level Error
-        Return
+    #Figure out password
+    $Error.Clear()
+    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    $DomainCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    If ($Error) {
+        Write-BTRLog "Can't figure out domain creditals. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
     }
 
+    #Start PS Session
+    $Error.Clear()
+    $PSS = New-PSSession -VMName $VMName -Credential $DomainCreds
+    If ($Error) {
+        Write-BTRLog "Unable to connect establish PS session with $VMName" -Level Error
+    }Else{
+        Write-BTRLog "Connected PS session to $VMName" -Level Progress
+    }
+
+    #Check if OU already exists
+    $Error.Clear()
+    If (Invoke-Command -Session $PSS -ScriptBlock {Get-ADOrganizationalUnit -Filter * | Where Name -eq $Using:OU}) {
+        Write-BTRLog "$OU already exists" -Level Debug
+    }Else{
+        Write-BTRLog "Creating $OU" -Level Progress
+        $Error.Clear()
+        Invoke-Command -Session $PSS -ScriptBlock {
+            New-ADOrganizationalUnit -Name $Using:OU -Confirm:$False -ErrorAction SilentlyContinue
+        }
+        If ($Error) {
+            Write-BTRLog "Failed to create new OU $OU." -Level Error
+            Return $False
+        }Else{
+            Write-BTRLog "   Success!"
+        }
+    }
+
+    #Get full path to OU
+    $Error.Clear()
+    $OUName = Invoke-Command -Session $PSS -ScriptBlock {
+        Get-ADOrganizationalUnit -Filter * | Where Name -like $Using:OU | select -First 1 -ExpandProperty DistinguishedName
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to get OU" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Users will be created in $OUName" -Level Debug
+    }
+
+    #Find Exchange Server and connect
+    If ($CreateMailbox) {
+        Write-BTRLog "Finding Exchange server" -Level Debug
+        $Error.Clear()
+        If ($ExchangeServerName = Invoke-Command -Session $PSS -ScriptBlock { Get-ADGroupMember "Exchange Servers" | Where objectClass -eq 'computer' | Select -First 1 -ExpandProperty Name }) {
+            $ExPSS = New-PSSession -VMName $ExchangeServerName -Credential $DomainCreds
+
+            Invoke-Command -Session $ExPSS -ScriptBlock {
+                If (!(Get-PSSnapin | Where Name -eq "Microsoft.Exchange.Management.PowerShell.SnapIn")) {
+                    Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
+                }
+            }
+            If ($Error) {
+                Write-BTRLog "Failed to import Exchange management module" -Level Error
+                Return $False
+            }Else{
+               Write-BTRLog "Exchange PS plugin loaded." -Level Debug
+            }
+        }Else{
+            Write-BTRLog "Unable to open PS session on $ExchangeServerName" -Level Error
+            Return $False
+        }
+    }
+    
+    
+    #Create the users
     For ($I = 1; $I -le $NumberOfUsers; $I++) {
+        $PaddedNumber = ([String]$I).PadLeft(4,'0')
+        $UserName = "$NamingPattern$PaddedNumber"
+        Write-BTRLog "Creating $UserName" -Level Debug
         
-        Write-BTRLog "Creating "
+        Write-BTRLog "   Checking if $UserName Exists"
+        If (Invoke-Command -Session $PSS -ScriptBlock { Get-ADUser -Filter * | Where Name -Eq $Using:UserName }) {
+            Write-BTRLog "      $UserName already exists" -Level Error
+            Continue
+        }
+
+        Write-BTRLog "   Creating $UserName" -Level Progress
+        $Error.Clear()
+        Invoke-Command -Session $PSS -ScriptBlock {
+            $Name = $Using:UserName
+            $Password = ConvertTo-SecureString -AsPlainText $Using:Password -Force
+            New-ADUser -Name $Name -SamAccountName $Name -AccountPassword $Password -UserPrincipalName "$Name@$($Using:Instance.DomainName)" -Path $Using:OUName -enabled $True -Confirm:$False
+        }
+        If ($Error) {
+            Write-BTRLog "Failed to create $UserName" -Level Error
+            Continue
+        }Else{
+            Write-BTRLog "      Success!"
+        }
+
+        #Mail Enable user
+        If ($CreateMailbox) {
+            Write-BTRLog "   Creating mailbox" -Level Debug
+            $Error.Clear()
+            Invoke-Command -Session $ExPSS -ScriptBlock {
+                Enable-MailBox -Identity $Using:UserName -Alias $Using:UserName  2>&1 | Out-Null
+            }
+            If ($Error) {
+                Write-BTRLog "Failed to create mailbox for $UserName" -Level Error
+                Continue
+            }Else{
+                Write-BTRLog "      Success!" -Level Debug
+            }
+        }   
     } 
-
-
 }
