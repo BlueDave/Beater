@@ -3079,6 +3079,298 @@ Function Install-BTRSQL {
     Install-BTRSofware -Name "SQL Server Management Studio" -Instance $BeaterInstance -VMName DB1 -Installer "SSMS-Setup-ENU.exe" -WebLink 'https://aka.ms/ssmsfullsetup' -Args "/install /quiet /passive /norestart"
 }
 
+Function Install-BTRCertAuth {
+    Param (
+        [Parameter(Mandatory=$True)][String]$VMName
+    )
+
+    #Make sure VM Exists
+    If (!($VM = Hyper-V\Get-VM -Name $VMName)) {
+        Read-Host "$VMName does not exist"
+        Return $False
+    }
+
+    #Figure out Instance
+    $InstanceName = $VM.Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Select -ExpandProperty Instance
+    If (!($Instance = $BeaterConfig.Instances[$InstanceName])) {
+        Write-BTRLog "Unable to find instance for $VmName" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "$VmName is member of $InstanceName." -Level Debug
+    }
+
+    #Figure out password
+    $Error.Clear()
+    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    $DomainCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    If ($Error) {
+        Write-BTRLog "Can't figure out local creditals. Error: $($Error[0].Exception.Message)" -Level Error
+        Return $False
+    }
+    
+    #Install Web Server Role
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Install-WindowsFeature -name Web-Server -IncludeManagementTools `
+            -Confirm:$False -ErrorAction SilentlyContinue 2>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to install IIS role" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Installed IIS Role" -Level Progress
+    }
+    
+    #Create folder for CDP
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        New-Item -Path C:\PKI -ItemType Directory -Force -Confirm:$False 2>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to create C:\PKI" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Created C:\PKI" -Level Progress
+    }
+
+    #Create PKI virtual folder
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        New-WebVirtualDirectory -Name PKI -Site "Default Web Site" `
+            -PhysicalPath "C:\PKI" `
+            -Force -ErrorAction SilentlyContinue 2>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to create PKI Virtual Folder" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Created PKI virtual folder" -Level Progress
+    }
+
+    #Allow Double Escaping
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        C:\Windows\System32\inetsrv\appcmd set config /section:requestfiltering /allowdoubleescaping:true 2>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to configure double escaping" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Configured double escaping" -Level Error
+
+    }
+
+    #Create CNAME in DNS
+    $ZoneName = $Instance.DomainName
+    $PKiName = "$VMName`.$ZoneName"
+    $Error.Clear()
+    Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+        If (!(Get-DnsServerResourceRecord -ZoneName $Using:Zonename | Where HostName -like 'PKI')) {
+            Add-DnsServerResourceRecordCName -ZoneName $Using:Zonename -Name "PKI" -HostNameAlias $Using:PKiName
+        }
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to create CNAME for PKI" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Created CNAME for PKI" -Level Error
+    }
+
+
+    #Install CA Role
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Add-WindowsFeature Adcs-Cert-Authority -IncludeManagementTools 2>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to install CA role" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Install CA role" -Level Progress
+    }
+
+    #Setup CA Role
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Try {
+            Install-AdcsCertificationAuthority `
+                -CAType EnterpriseRootCA `
+                -ValidityPeriodUnits 20 `
+                -ValidityPeriod Years `
+                -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" `
+                -KeyLength 4096 `
+                -HashAlgorithmName SHA256 `
+                -Force `
+                -Confirm:$False -ErrorAction SilentlyContinue 2>&1 | Out-Null
+        }Catch{
+            #Just to shut it up
+        }
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to configure CA role" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Configued CA Role" -Level Progress
+    }
+
+    #Configure CA in Registry
+    $Path = "HKLM:/SYSTEM/CurrentControlSet/Services/CertSvc/Configuration/$($Instance.NBDomainName)-$VMName-CA"
+    $CAPublish = @(
+        "1:C:\Windows\system32\CertSrv\CertEnroll\%1_%3%4.crt",
+        "2:http://PKI.$($Instance.DomainName)/PKI/%1_%3%4.crt",
+        "2:ldap:///CN=%7,CN=AIA,CN=Public Key Services,CN=Services,%6%11"
+    )
+    $CRLPublish = @(
+        "1:C:\Windows\system32\CertSrv\CertEnroll\%3%8%9.crl",
+        "2:http://PKI.$($Instance.DomainName)/PKI/%3%8%9.crl",
+        "10:ldap:///CN=%7%8,CN=%2,CN=CDP,CN=Public Key Services,CN=Services,%6%10",
+        "65:file://C:\PKI\%3%8%9.crl"
+    )
+
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        $Path = $Using:Path
+        Get-Service | Where Name -eq certsvc | Stop-Service
+        Start-Sleep 3
+        Set-ItemProperty -Path $Path -Name CRLPeriodUnits -Value 3
+        Set-ItemProperty -Path $Path -Name CRLPeriod -Value “Days”
+        Set-ItemProperty -Path $Path -Name CRLDeltaPeriodUnits -Value 0
+        Set-ItemProperty -Path $Path -Name CRLDeltaPeriod -Value “Days”
+        Set-ItemProperty -Path $Path -Name CRLOverlapUnits -Value 3
+        Set-ItemProperty -Path $Path -Name CRLPeriod -Value “Days”
+        Set-ItemProperty -Path $Path -Name ValidityPeriodUnits -Value 2
+        Set-ItemProperty -Path $Path -Name ValidityPeriod -Value “Years”
+        Set-ItemProperty -Path $Path -Name AuditFilter -Value 127
+        Set-ItemProperty -Path $Path -Name CACertPublicationURLs -Value $Using:CAPublish
+        Set-ItemProperty -Path $Path -Name CRLPublicationURLs -Value $Using:CRLPublish
+        Get-Service | Where Name -eq certsvc | Start-Service
+        Start-Sleep 5
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to add CA config to registry" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Added CA config to registry" -Level Progress
+    }
+
+    #Publish certificates and CRL
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Certutil -CRL  2>&1 | Out-Null
+        Copy-Item C:\Windows\System32\certsrv\certenroll\* C:\PKI -Force
+        $RootCertName = Get-Item -Path C:\Windows\System32\CertSrv\CertEnroll\* | Where Name -like "*CA.crt" |Select -ExpandProperty FullName
+        Start-Process -FilePath C:\Windows\System32\certutil.exe -ArgumentList "-­f ­-dspublish $RootCertName RootCA" 2>&1 | Out-Null
+        $RootCRLName = Get-Item -Path C:\Windows\System32\CertSrv\CertEnroll\* | Where Name -like "*CA.crl" |Select -ExpandProperty FullName
+        Start-Process -FilePath C:\Windows\System32\certutil.exe -ArgumentList "-­f ­-dspublish $RootCRLName" 2>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to plush CA and CRL" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Published CA and CRL" -Level Progress
+    }
+
+    #Create Web Server CA Template
+    $TemplateName = "BeaterWeb"
+    $Error.Clear()
+    Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+        $TemplateName = $Using:TemplateName
+        $ConfigContext = ([ADSI]"LDAP://RootDSE").ConfigurationNamingContext 
+        If (!(Test-Path ("AD:\CN=$TemplateName,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"))) {
+            #Create Certificate
+            $ADSI = [ADSI]"LDAP://CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"
+            $CopyFrom = [ADSI]"LDAP://CN=WebServer,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"
+            $NewTempl = $ADSI.Create("pKICertificateTemplate", "CN=$TemplateName") 
+            $NewTempl.SetInfo()
+            
+            #Configure Certificate
+            $NewTempl.Put("msPKI-Certificate-Application-Policy", "1.3.6.1.5.5.7.3.1")
+            $NewTempl.Put("msPKI-Certificate-Name-Flag", "1")
+            $NewTempl.Put("msPKI-Cert-Template-OID", "1.3.6.1.4.1.311.21.8.10873422.2128777.16532651.2069071.3513221.248.3109564.1260757")
+            $NewTempl.Put("msPKI-Enrollment-Flag", "0")
+            $NewTempl.Put("msPKI-Minimal-Key-Size", "2048")
+            $NewTempl.Put("msPKI-Private-Key-Flag", "101056784")
+            $NewTempl.Put("msPKI-RA-Signature", "0")
+            $NewTempl.Put("msPKI-Template-Minor-Revision", "4")
+            $NewTempl.Put("msPKI-Template-Schema-Version", "4")
+            $NewTempl.pKICriticalExtensions = "2.5.29.15"
+            $NewTempl.pKIDefaultCSPs = @("1,Microsoft RSA SChannel Cryptographic Provider","2,Microsoft DH SChannel Cryptographic Provider")
+            $NewTempl.pKIDefaultKeySpec = 1
+            $NewTempl.pKIExpirationPeriod = $CopyFrom.pKIExpirationPeriod
+            $NewTempl.pKIExtendedKeyUsage = "1.3.6.1.5.5.7.3.1"
+            $NewTempl.pKIKeyUsage =  $CopyFrom.pKIKeyUsage
+            $NewTempl.pKIMaxIssuingDepth = 0
+            $NewTempl.pKIOverlapPeriod = $CopyFrom.pKIOverlapPeriod
+            $NewTempl.SetInfo()
+            
+            #Grant Authenticated Users Enroll Rights
+            $InheritedObjectType = [GUID]'00000000-0000-0000-0000-000000000000'
+            $ObjectType = [GUID]'0e10c968-78fb-11d2-90d4-00c04f79dc55'
+            $SID = (Get-ADGroup "Domain Users").SID
+            
+            $ACL = Get-ACL "AD:\$($NewTempl.distinguishedName)"
+            $SID = (Get-ADGroup "Domain Users").SID
+            $ACE = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $SID, 'ExtendedRight', 'Allow', $ObjectType, 'None', $InheritedObjectType
+            $ACL.AddAccessRule($ACE)
+            $SID = (Get-ADGroup "Domain Computers").SID
+            $ACE = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $SID, 'ExtendedRight', 'Allow', $ObjectType, 'None', $InheritedObjectType
+            $ACL.AddAccessRule($ACE)
+            Set-Acl "AD:\$($NewTempl.distinguishedName)" -AclObject $ACL
+        }
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to create $TemplateName template" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Created $TemplateName template" -Level Error
+    }
+
+    #Add Template to CA
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        $TemplateName = $Using:TemplateName
+        If (!(Get-CaTemplate | Where Name -like $TemplateName)) {
+            Add-CATemplate -Name $TemplateName -Force -Confirm:$False
+        }
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to install $TemplateName on $VMName" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Installed $TemplateName on $VMName" -Level Progress
+    }
+
+    #Install Certificate Authority Web Enrollment
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Add-WindowsFeature ADCS-Web-Enrollment -IncludeManagementTools 2>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to install CA web Enrollment role" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Install CA Web Enrollment role" -Level Progress
+    }
+
+    #Configure Certificate Authority Web Enrollment
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Try {
+            Install-AdcsWebEnrollment -Confirm:$False -Force 
+        }Catch{
+            #Just to shut it up
+        }
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to configure CA web Enrollment role" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Configured CA Web Enrollment role" -Level Progress
+    }
+
+}
+
+
 Function New-BtrUsers {
     Param (
         [Parameter(Mandatory=$True)]$Instance,
