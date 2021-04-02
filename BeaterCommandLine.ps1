@@ -75,7 +75,7 @@ Function Get-cBTRInstanceConfig {
     $NewInstance = @{}
 
     #Set Name
-    $OriginalDefault = "Beater"
+    $Default =$OriginalDefault = "Beater"
     If ($Config.Instances.Count -gt 0) {
         [Int]$Append = 1
         While($Config.Instances[$Default]) {
@@ -642,17 +642,21 @@ Param (
     }Until ($IPAddress -Match "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
 
     #Join Domain
-    $Default = "Y"
-    Do {
-        $New = Read-Host "Join Domain (Y/N) [$Default]"
-        If (!($New)) {
-            $New = $Default
-        }Else {
-            $New = $New.ToUpper()
+    If ($Instance.DomainName) {
+        $Default = "Y"
+        Do {
+            $New = Read-Host "Join Domain (Y/N) [$Default]"
+            If (!($New)) {
+                $New = $Default
+            }Else {
+                $New = $New.ToUpper()
+            }
+        }Until ($New -Match '[YN]')
+        If ($New -eq 'Y') {
+            $JoinDomain = $True
+        }Else{
+            $JoinDomain = $False
         }
-    }Until ($New -Match '[YN]')
-    If ($New -eq 'Y') {
-        $JoinDomain = $True
     }Else{
         $JoinDomain = $False
     }
@@ -689,11 +693,13 @@ Param (
     }
 
     #Update DNS
-    If (Add-BtrDNSRecord -Instance $Instance -IPAddress $IPAddress -RecordName $VMName) {
-        Write-BTRLog "Updated DNS record for $VMName" -Level Progress
-    }Else{
-        Write-BTRLog "Failed to update DNS for $VMName" -Level Error
-        Return $False
+    If ($Instance.DomainName) {
+        If (Add-BtrDNSRecord -Instance $Instance -IPAddress $IPAddress -RecordName $VMName) {
+            Write-BTRLog "Updated DNS record for $VMName" -Level Progress
+        }Else{
+            Write-BTRLog "Failed to update DNS for $VMName" -Level Error
+            Return $False
+        }
     }
 
     #Configure VM

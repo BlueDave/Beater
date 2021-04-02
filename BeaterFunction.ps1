@@ -441,15 +441,30 @@ Function Get-BtrNextIP {
         [Parameter(Mandatory=$True)]$Instance
     ) 
     
-    $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
-    $InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
+    #$SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
+    #$InstanceCreds = New-Object -TypeName System.Management.Automation.PSCredential($Instance.AdminNBName,$SecurePassword)
 
-    $IP = Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
-        Get-DnsServerResourceRecord -ZoneName $using:Instance.DomainName | Where RecordType -EQ 'A' | Select -ExpandProperty RecordData | Select -ExpandProperty IPv4Address | Select -ExpandProperty IPAddressToString | Sort | Select -Last 1
+    #$IP = Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
+    #    Get-DnsServerResourceRecord -ZoneName $using:Instance.DomainName | Where RecordType -EQ 'A' | Select -ExpandProperty RecordData | Select -ExpandProperty IPv4Address | Select -ExpandProperty IPAddressToString | Sort | Select -Last 1
+    #}
+    Write-BTRLog "Getting Last IP on switch $($Instance.SwitchName)" -Level Debug
+    If ($IP = Get-VM | Select -ExpandProperty NetworkAdapters | Where SwitchName -eq $Instance.SwitchName | Select -ExpandProperty IPAddresses | Sort -Descending | Select -First 1) {
+        Write-BTRLog "Last IP on switch is $IP" -Level Debug
+    }Else{
+        $IP = "$($Instance.IPPrefix).50"
     }
-    $Octets = $IP -split "\."
-    $Octets[3] = [String]([Int]$Octets[3] + 1)
-    $IP = $Octets -join "."
+
+    Do {
+        $Octets = $IP -split "\."
+        $Octets[3] = [String]([Int]$Octets[3] + 1)
+        Write-Host $Octets[3]
+        If ([Int]$Octets[3] -gt 100) {
+            Write-BTRLog "Unable to find available IP on $($Instance.SwitchName)" -Level Error
+            Return $False
+        }
+        $IP = $Octets -join "."
+        Write-BTRLog "Testing $IP"
+    } Until (!(Test-Connection $IP -Quiet -Count 1 -ErrorAction SilentlyContinue))
     Return $IP
 }
 
@@ -2680,7 +2695,7 @@ Function Install-BTRExchange {
         Read-Host "$VMName does not exist"
         Return $False
     }
-
+    
     #Figure out Instance
     $InstanceName = $VM.Notes | ConvertFrom-Json -ErrorAction SilentlyContinue | Select -ExpandProperty Instance
     If (!($Instance = $BeaterConfig.Instances[$InstanceName])) {
@@ -2689,7 +2704,7 @@ Function Install-BTRExchange {
     }Else{
         Write-BTRLog "$VmName is member of $InstanceName." -Level Debug
     }
-
+    
     #Figure out password
     $Error.Clear()
     $SecurePassword = ConvertTo-SecureString -AsPlainText $Instance.AdminPassword -Force
@@ -2699,17 +2714,23 @@ Function Install-BTRExchange {
         Return $False
     }
     
+    #Verify Server is not 2019
+    If (Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {(([System.Environment]::OSVersion.Version).Build -gt 17000)}) {
+        Read-Host "$VMName is running an incompatable version of Windows"
+        Return $False
+    }
+    
     #Make sure there isn't already Exchange in the domain
     If (Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {Try {Get-AdGroup "Exchange Servers" -ErrorAction SilentlyContinue 2>&1 | Out-Null}Catch{}}) {
         Read-Host "Looks like you already have an exchange org in $($Instance.Name)"
         Return $False
     }
-
-    #Disable Realtime Scan.  If you don't do this it quatruples the time to complete
+    
+    #Disable Realtime Scan.  If you don't do this it quadruples the time to complete
     Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
         Set-MpPreference -DisableRealtimeMonitoring $True -ErrorAction SilentlyContinue 2>&1 | Out-Null
     }
-
+    
     "Creating M: Drive"
     $Path = "$($Instance.HDDPath)\$VMName-M.vhdx"
     Hyper-V\New-VHD -Path $Path -SizeBytes 100GB -Dynamic
@@ -2799,7 +2820,7 @@ Function Install-BTRExchange {
     }Else{
         Write-BTRLog "      Sucess!" -Level Debug
     }
-
+    
     #Run Exchange Installer
     Write-BTRLog "Running Exchange Setup" -Level Progress
     $Args = @(
@@ -2820,10 +2841,10 @@ Function Install-BTRExchange {
     }Else{
         Write-BTRLog "      Sucess!" -Level Debug
     }
-
+    
     #Run Cumulative Update
     If ($UpdateISO) {
-
+    
         #Switch ISOs
         Write-BTRLog "Change DVDs" -Level Progress
         $Error.Clear()
@@ -2834,7 +2855,7 @@ Function Install-BTRExchange {
         }Else{
             Write-BTRLog "      Sucess!" -Level Debug
         }
-
+    
         #Run Exchange Cumulative Update
         Write-BTRLog "Running Exchange Update" -Level Progress
         $Args = @(
@@ -2852,15 +2873,15 @@ Function Install-BTRExchange {
             Write-BTRLog "      Sucess!" -Level Debug
         }
     }
-
+    
     #Eject ISO
     Get-VMDvdDrive -VMName $VMName -ErrorAction SilentlyContinue | Remove-VMDvdDrive -ErrorAction SilentlyContinue
-
+    
     #Enable Realtime Scan
     Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
         Set-MpPreference -DisableRealtimeMonitoring $False -ErrorAction SilentlyContinue 2>&1 | Out-Null
     }
-
+    
     #Disable Cyphers
     Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
         REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC4 128/128" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
@@ -2884,13 +2905,17 @@ Function Install-BTRExchange {
         REG ADD "HKLM\Software\Microsoft\.NETFramework\v4.0.30319" /v SystemDefaultTlsVersions /t REG_DWORD /d 1 /f 2>&1 | Out-Null
     }
 
-
     Return $True
 }
 
 Function Configure-BTRExchange {
     Param (
-        [Parameter(Mandatory=$True)][String]$VMName
+        [Parameter(Mandatory=$True)][String]$VMName,
+        [String]$CertificateTemplateName = "BeaterWeb",
+        [String]$MailDomains,
+        [String]$Alias,
+        [String]$Cnames,
+        [String]$ExtraSans
     )
 
     #Make sure VM Exists
@@ -2917,6 +2942,9 @@ Function Configure-BTRExchange {
         Return $False
     }
 
+    $Domain = $Instance.DomainName
+    $DNSName = "$VMName.$Domain"
+
     #Start PS Session
     $Error.Clear()
     $PSS = New-PSSession -VMName $VMName -Credential $DomainCreds
@@ -2940,24 +2968,96 @@ Function Configure-BTRExchange {
        Write-BTRLog "Exchange PS plugin loaded." -Level Debug
     }
 
-    #Move Mailbox to M: and L: drives
-    Write-BTRLog "Moving mail database to L: and M: drives" -Level Progress
+    ##Move Mailbox to M: and L: drives
+    #Write-BTRLog "Moving mail database to L: and M: drives" -Level Progress
+    #Invoke-Command -Session $PSS -ScriptBlock {
+    #    Get-MailBoxDatabase -Identity * | ForEach {Move-DatabasePath -Identity $_.Name -EdbFilePath "M:\$($_.Name)\$($_.Name).edb" -logFolderPath "L:\$($_.Name)\" -Force -ErrorAction SilentlyContinue -Confirm:$False}
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to move database files" -Level Error
+    #    Return $False
+    #}Else{
+    #   Write-BTRLog "   Success!" -Level Debug
+    #}
+    
+
+
+
+    ##Create MX record
+    #If ($Alias) {
+    #    $Cnames += $Alias
+    #    $MailRecord = $Alias
+    #}Else{
+    #    $MailRecord = $VMName
+    #}
+    #If ($MailRecord -like "*.$Domain") {
+    #    $MailRecord = $MailRecord -replace ".$Domain",""
+    #}
+    #Write-BTRLog "Creating MX record $MailRecord in $Domain" -Level Progress
+    #$Error.Clear()
+    #Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+    #    Add-DnsServerResourceRecordMX -Preference 10 -Name "." -MailExchange $Using:MailRecord -ZoneName $Using:Domain
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "   Failed. Error: $($Error[0].Exception.Message)." -Level Error
+    #    Return
+    #}Else{
+    #    Write-BTRLog "   Success!" -Level Error
+    #}
+    #
+    ##Create CNAMEs records
+    #If ($Cnames) {
+    #    ForEach ($Cname In $Cnames) {
+    #        If ($Cname -like "*.$Domain") {
+    #            $AddMe = $Cname -replace ".$Domain",""
+    #        }Else{
+    #            $AddMe = $Cname
+    #        }
+    #        Write-BTRLog "Adding CNAME $AddMe to $Domain" -Level Progress
+    #        $Error.Clear()
+    #        Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+    #            Add-DnsServerResourceRecordCName -ZoneName $Using:Domain -Name $Using:AddMe -HostNameAlias $Using:DNSName
+    #        }
+    #        If ($Error) {
+    #            Write-BTRLog "   Failed. Error: $($Error[0].Exception.Message)." -Level Error
+    #            Return
+    #        }Else{
+    #            Write-BTRLog "   Success!" -Level Error
+    #        }
+    #    }
+    #}
+
+    
+    #Create Certificate
+    $Subject = "CN=$DNSName"
+    $SANS = @("$Alias","$Alias.$($Instance.DomainName)","$VMName","$VMName.$($Instance.DomainName)","$Domain")
+    Write-BTRLog "Creating certificate from template $CertificateTemplateName with Subject:" -Level Progress
+    Write-BTRLog "SANS: $SANS" -Level Debug
     Invoke-Command -Session $PSS -ScriptBlock {
-        Get-MailBoxDatabase -Identity * | ForEach {Move-DatabasePath -Identity $_.Name -EdbFilePath "M:\$($_.Name)\$($_.Name).edb" -logFolderPath "L:\$($_.Name)\" -Force -ErrorAction SilentlyContinue -Confirm:$False}
+        Get-Certificate -Template $Using:CertificateTemplateName -Url LDAP: -SubjectName $Using:Subject -CertStoreLocation Cert:\LocalMachine\My\ -DnsName $Using:SANS
     }
     If ($Error) {
-        Write-BTRLog "Failed to move database files" -Level Error
-        Return $False
+        Write-BTRLog "   Failed. Error: $($Error[0].Exception.Message)." -Level Error
+        Return
     }Else{
-       Write-BTRLog "   Success!" -Level Debug
+        Write-BTRLog "   Success!" -Level Error
     }
 
-    #Create MX record
-    Write-BTRLog
-    Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
-        Add-DnsServerResourceRecordMX -Preference 10 -Name "." -MailExchange "$Using:VMName.$($Using:Instance.DomainName)" -ZoneName $Using:Instance.DomainName
+    #Install Certificate
+    Write-BTRLog "Assigning certificate with Subject:$Subject to Exchange Services" -Level Progress
+    Invoke-Command -Session $PSS -ScriptBlock {
+        Get-ExchangeCertificate | Where Subject -EQ $Using:Subject | Enable-ExchangeCertificate -Services IIS,SMTP,IMAP,POP -Force -Confirm:$False
+    }
+    If ($Error) {
+        Write-BTRLog "   Failed. Error: $($Error[0].Exception.Message)." -Level Error
+        Return
+    }Else{
+        Write-BTRLog "   Success!" -Level Error
     }
 
+
+
+    Remove-PSSession -Session $PSS
 
     Return $True
 }
@@ -3014,12 +3114,12 @@ Function Install-BTRSQL {
             Format-Volume -DriveLetter L -FileSystem NTFS -NewFileSystemLabel "Logs" -Confirm:$False -Force
         }
     }
-
+    
     If (!(Get-VM -Name $VMName | Get-VMDvdDrive | Where Path -Like $SQLISO)) {
         "Mounting SQL ISO ($SQLISO)"
         Hyper-V\Add-VMDvdDrive -VMName $VMName -Path $SQLISO -ErrorAction SilentlyContinue
     }
-
+    
     "Creating Service Account"
     $UPN = "$SQLUser@$($Instance.DomainName)"
     Invoke-Command -VMName $Instance.DomainController -Credential $InstanceCreds -ScriptBlock {
@@ -3028,14 +3128,14 @@ Function Install-BTRSQL {
             New-AdUser -Name "SQL Service Account" -SamAccountName $Using:SQLUser -UserPrincipalName $Using:UPN -DisplayName "SQL Service Account" -AccountPassword $SecurePassword -ChangePasswordAtLogon $False -Confirm:$False -PasswordNeverExpires $True -Enabled $True
         }
     }
-
+    
     "Making $SQLUser a Local Admin on $VMname"
     Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
         If (!(Get-LocalGroupMember Administrators | Where Name -like "*$Using:SQLUser")) {
             Add-LocalGroupMember -Group Administrators -Member $Using:UPN
         }
     }
-
+    
     $Args =  '/Q /ACTION="install" /INDICATEPROGRESS="True" /UpdateEnabled="False" /ERRORREPORTING="False" '
     $Args += '/IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE /IACCEPTPYTHONLICENSETERMS /IACCEPTROPENLICENSETERMS '
     $Args += '/FEATURES=SQLENGINE,CONN,SDK,SNAC_SDK /INSTANCENAME=MSSQLSERVER '
@@ -3043,7 +3143,7 @@ Function Install-BTRSQL {
     $Args += '/ADDCURRENTUSERASSQLADMIN="False" /SQLSYSADMINACCOUNTS="' + $Instance.NBDomainName + '\Domain Admins" /SQLSYSADMINACCOUNTS="BUILTIN\Administrators" '
     $Args += '/SECURITYMODE="SQL" /SAPWD="' + $Instance.AdminPassword + '" '
     $Args += '/SQLSVCACCOUNT="' + $Instance.NBDomainName + '\' + $SQLUser + '" /SQLSVCPASSWORD="' + $Instance.AdminPassword + '" '
-
+    
     "Installing SQL Server"
     Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
         Start-Process "D:\setup.exe" -ArgumentList $Using:Args -Wait 
@@ -3052,31 +3152,54 @@ Function Install-BTRSQL {
     "Configuring Firewall"
     Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
         $FWRules = Get-NetFirewallRule
-        If (!($FWRules | Where DisplayName -Like �SQL Server�)) {
-            New-NetFirewallRule -DisplayName �SQL Server� -Direction Inbound �Protocol TCP �LocalPort 1433 -Action allow
+        If (!($FWRules | Where DisplayName -Like 'SQL Server')) {
+            New-NetFirewallRule -DisplayName 'SQL Server' -Direction Inbound -Protocol TCP -LocalPort 1433 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like �SQL Admin Connection�)) {
-            New-NetFirewallRule -DisplayName �SQL Admin Connection� -Direction Inbound �Protocol TCP �LocalPort 1434 -Action allow
+        If (!($FWRules | Where DisplayName -Like 'SQL Admin Connection')) {
+            New-NetFirewallRule -DisplayName 'SQL Admin Connection' -Direction Inbound -Protocol TCP -LocalPort 1434 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like �SQL Database Management�)) {
-            New-NetFirewallRule -DisplayName �SQL Database Management� -Direction Inbound �Protocol UDP �LocalPort 1434 -Action allow
+        If (!($FWRules | Where DisplayName -Like 'SQL Database Management')) {
+            New-NetFirewallRule -DisplayName 'SQL Database Management' -Direction Inbound -Protocol UDP -LocalPort 1434 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like �SQL Service Broker�)) {
-            New-NetFirewallRule -DisplayName �SQL Service Broker� -Direction Inbound �Protocol TCP �LocalPort 4022 -Action allow
+        If (!($FWRules | Where DisplayName -Like 'SQL Service Broker')) {
+            New-NetFirewallRule -DisplayName 'SQL Service Broker' -Direction Inbound -Protocol TCP -LocalPort 4022 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like �SQL Debugger/RPC�)) {
-            New-NetFirewallRule -DisplayName �SQL Debugger/RPC� -Direction Inbound �Protocol TCP �LocalPort 135 -Action allow
+        If (!($FWRules | Where DisplayName -Like 'SQL Debugger/RPC')) {
+            New-NetFirewallRule -DisplayName 'SQL Debugger/RPC' -Direction Inbound -Protocol TCP -LocalPort 135 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like �SQL Browser�)) {
-            New-NetFirewallRule -DisplayName �SQL Browser� -Direction Inbound �Protocol TCP �LocalPort 2382 -Action allow
+        If (!($FWRules | Where DisplayName -Like 'SQL Browser')) {
+            New-NetFirewallRule -DisplayName 'SQL Browser' -Direction Inbound -Protocol TCP -LocalPort 2382 -Action allow
         }
-        If (!($FWRules | Where DisplayName -Like �SQL Server Browse Button Service�)) {
-            New-NetFirewallRule -DisplayName �SQL Server Browse Button Service� -Direction Inbound �Protocol UDP �LocalPort 1433 -Action allow
+        If (!($FWRules | Where DisplayName -Like 'SQL Server Browse Button Service')) {
+            New-NetFirewallRule -DisplayName 'SQL Server Browse Button Service' -Direction Inbound -Protocol UDP -LocalPort 1433 -Action allow
         }
     }
 
-    #Install SSMS
-    Install-BTRSofware -Name "SQL Server Management Studio" -Instance $BeaterInstance -VMName DB1 -Installer "SSMS-Setup-ENU.exe" -WebLink 'https://aka.ms/ssmsfullsetup' -Args "/install /quiet /passive /norestart"
+    ##Install SSMS
+    #Install-BTRSofware -Name "SQL Server Management Studio" -VMName $VMName -Installer "SSMS-Setup-ENU.exe" -WebLink 'https://aka.ms/ssmsfullsetup' -Args "/install /quiet /passive /norestart"
+
+    ##Patch SQL
+    #"Enabling auto updates on $SQLUser a Local Admin on $VMname"
+    #Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+    #    Set-Service -Name BITS -StartupType AutoMatic -ErrorAction SilentlyContinue
+	#    Set-Service -Name wuauserv -StartupType AutoMatic -ErrorAction SilentlyContinue
+    #    Start-Service -Name BITS -ErrorAction SilentlyContinue
+	#    Start-Service -Name wuauserv -ErrorAction SilentlyContinue
+    #    REG ADD HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate /v WUServer /d "https://HPWSUS01.hobbylobby.corp:8531" /t REG_SZ /f *>&1 | Out-Null
+    #}
+    #
+    #Write-BTRLog "Checking for updates" -Level Progress
+    #Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+    #    Get-WindowsUpdate -Confirm:$False -ErrorAction SilentlyContinue  *>&1 | Out-Null
+    #}
+    #
+    #Write-BTRLog  "Installing updates" -Level Progress
+    #Invoke-Command -VMName $VMName -Credential $InstanceCreds -ScriptBlock {
+    #    Install-WindowsUpdate -AcceptAll -AutoReboot *>&1 | Out-Null
+    #}
+
+    Return $True
+
 }
 
 Function Install-BTRCertAuth {
@@ -3132,7 +3255,7 @@ Function Install-BTRCertAuth {
     }Else{
         Write-BTRLog "Created C:\PKI" -Level Progress
     }
-
+    
     #Create PKI virtual folder
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
@@ -3146,7 +3269,7 @@ Function Install-BTRCertAuth {
     }Else{
         Write-BTRLog "Created PKI virtual folder" -Level Progress
     }
-
+    
     #Allow Double Escaping
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
@@ -3157,9 +3280,9 @@ Function Install-BTRCertAuth {
         Return $False
     }Else{
         Write-BTRLog "Configured double escaping" -Level Error
-
+    
     }
-
+    
     #Create CNAME in DNS
     $ZoneName = $Instance.DomainName
     $PKiName = "$VMName`.$ZoneName"
@@ -3175,8 +3298,8 @@ Function Install-BTRCertAuth {
     }Else{
         Write-BTRLog "Created CNAME for PKI" -Level Error
     }
-
-
+    
+    
     #Install CA Role
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
@@ -3188,7 +3311,7 @@ Function Install-BTRCertAuth {
     }Else{
         Write-BTRLog "Install CA role" -Level Progress
     }
-
+    
     #Setup CA Role
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
@@ -3212,7 +3335,7 @@ Function Install-BTRCertAuth {
     }Else{
         Write-BTRLog "Configued CA Role" -Level Progress
     }
-
+    
     #Configure CA in Registry
     $Path = "HKLM:/SYSTEM/CurrentControlSet/Services/CertSvc/Configuration/$($Instance.NBDomainName)-$VMName-CA"
     $CAPublish = @(
@@ -3226,7 +3349,7 @@ Function Install-BTRCertAuth {
         "10:ldap:///CN=%7%8,CN=%2,CN=CDP,CN=Public Key Services,CN=Services,%6%10",
         "65:file://C:\PKI\%3%8%9.crl"
     )
-
+    
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
         $Path = $Using:Path
@@ -3252,7 +3375,7 @@ Function Install-BTRCertAuth {
     }Else{
         Write-BTRLog "Added CA config to registry" -Level Progress
     }
-
+    
     #Publish certificates and CRL
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
@@ -3270,75 +3393,78 @@ Function Install-BTRCertAuth {
         Write-BTRLog "Published CA and CRL" -Level Progress
     }
 
-    #Create Web Server CA Template
-    $TemplateName = "BeaterWeb"
-    $Error.Clear()
-    Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
-        $TemplateName = $Using:TemplateName
-        $ConfigContext = ([ADSI]"LDAP://RootDSE").ConfigurationNamingContext 
-        If (!(Test-Path ("AD:\CN=$TemplateName,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"))) {
-            #Create Certificate
-            $ADSI = [ADSI]"LDAP://CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"
-            $CopyFrom = [ADSI]"LDAP://CN=WebServer,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"
-            $NewTempl = $ADSI.Create("pKICertificateTemplate", "CN=$TemplateName") 
-            $NewTempl.SetInfo()
-            
-            #Configure Certificate
-            $NewTempl.Put("msPKI-Certificate-Application-Policy", "1.3.6.1.5.5.7.3.1")
-            $NewTempl.Put("msPKI-Certificate-Name-Flag", "1")
-            $NewTempl.Put("msPKI-Cert-Template-OID", "1.3.6.1.4.1.311.21.8.10873422.2128777.16532651.2069071.3513221.248.3109564.1260757")
-            $NewTempl.Put("msPKI-Enrollment-Flag", "0")
-            $NewTempl.Put("msPKI-Minimal-Key-Size", "2048")
-            $NewTempl.Put("msPKI-Private-Key-Flag", "101056784")
-            $NewTempl.Put("msPKI-RA-Signature", "0")
-            $NewTempl.Put("msPKI-Template-Minor-Revision", "4")
-            $NewTempl.Put("msPKI-Template-Schema-Version", "4")
-            $NewTempl.pKICriticalExtensions = "2.5.29.15"
-            $NewTempl.pKIDefaultCSPs = @("1,Microsoft RSA SChannel Cryptographic Provider","2,Microsoft DH SChannel Cryptographic Provider")
-            $NewTempl.pKIDefaultKeySpec = 1
-            $NewTempl.pKIExpirationPeriod = $CopyFrom.pKIExpirationPeriod
-            $NewTempl.pKIExtendedKeyUsage = "1.3.6.1.5.5.7.3.1"
-            $NewTempl.pKIKeyUsage =  $CopyFrom.pKIKeyUsage
-            $NewTempl.pKIMaxIssuingDepth = 0
-            $NewTempl.pKIOverlapPeriod = $CopyFrom.pKIOverlapPeriod
-            $NewTempl.SetInfo()
-            
-            #Grant Authenticated Users Enroll Rights
-            $InheritedObjectType = [GUID]'00000000-0000-0000-0000-000000000000'
-            $ObjectType = [GUID]'0e10c968-78fb-11d2-90d4-00c04f79dc55'
-            $SID = (Get-ADGroup "Domain Users").SID
-            
-            $ACL = Get-ACL "AD:\$($NewTempl.distinguishedName)"
-            $SID = (Get-ADGroup "Domain Users").SID
-            $ACE = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $SID, 'ExtendedRight', 'Allow', $ObjectType, 'None', $InheritedObjectType
-            $ACL.AddAccessRule($ACE)
-            $SID = (Get-ADGroup "Domain Computers").SID
-            $ACE = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $SID, 'ExtendedRight', 'Allow', $ObjectType, 'None', $InheritedObjectType
-            $ACL.AddAccessRule($ACE)
-            Set-Acl "AD:\$($NewTempl.distinguishedName)" -AclObject $ACL
-        }
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to create $TemplateName template" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Created $TemplateName template" -Level Error
-    }
-
-    #Add Template to CA
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        $TemplateName = $Using:TemplateName
-        If (!(Get-CaTemplate | Where Name -like $TemplateName)) {
-            Add-CATemplate -Name $TemplateName -Force -Confirm:$False
-        }
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to install $TemplateName on $VMName" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Installed $TemplateName on $VMName" -Level Progress
-    }
+    ##Create Web Server CA Template
+    #$TemplateName = "$($Instance.Name)Web"
+    #$Error.Clear()
+    #Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+    #    $TemplateName = $Using:TemplateName
+    #    $ConfigContext = ([ADSI]"LDAP://RootDSE").ConfigurationNamingContext 
+    #    If (!(Test-Path ("AD:\CN=$TemplateName,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"))) {
+    #        #Figure Out OID for the new certificate
+    #
+    #        
+    #        
+    #        #Create Certificate
+    #        $ADSI = [ADSI]"LDAP://CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"
+    #        $CopyFrom = [ADSI]"LDAP://CN=WebServer,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"
+    #        $NewTempl = $ADSI.Create("pKICertificateTemplate", "CN=$TemplateName") 
+    #        $NewTempl.SetInfo()
+    #        
+    #        #Configure Certificate
+    #        $NewTempl.Put("msPKI-Certificate-Application-Policy", "1.3.6.1.5.5.7.3.1")
+    #        $NewTempl.Put("msPKI-Certificate-Name-Flag", "1")
+    #        $NewTempl.Put("msPKI-Cert-Template-OID", "1.3.6.1.4.1.311.21.8.3896987.12586729.15221910.6745566.13247975.13.14940856.8588888")
+    #        $NewTempl.Put("msPKI-Enrollment-Flag", "0")
+    #        $NewTempl.Put("msPKI-Minimal-Key-Size", "2048")
+    #        $NewTempl.Put("msPKI-Private-Key-Flag", "16842752")
+    #        $NewTempl.Put("msPKI-RA-Signature", "0")
+    #        $NewTempl.Put("msPKI-Template-Minor-Revision", "4")
+    #        $NewTempl.Put("msPKI-Template-Schema-Version", "4")
+    #        $NewTempl.pKICriticalExtensions = "2.5.29.15"
+    #        $NewTempl.pKIDefaultCSPs = @("1,Microsoft RSA SChannel Cryptographic Provider","2,Microsoft DH SChannel Cryptographic Provider")
+    #        $NewTempl.pKIDefaultKeySpec = 1
+    #        $NewTempl.pKIExpirationPeriod = $CopyFrom.pKIExpirationPeriod
+    #        $NewTempl.pKIExtendedKeyUsage = "1.3.6.1.5.5.7.3.1"
+    #        $NewTempl.pKIKeyUsage =  $CopyFrom.pKIKeyUsage
+    #        $NewTempl.pKIMaxIssuingDepth = 0
+    #        $NewTempl.pKIOverlapPeriod = $CopyFrom.pKIOverlapPeriod
+    #        $NewTempl.SetInfo()
+    #        
+    #        #Grant Authenticated Users Enroll Rights
+    #        $InheritedObjectType = [GUID]'00000000-0000-0000-0000-000000000000'
+    #        $ObjectType = [GUID]'0e10c968-78fb-11d2-90d4-00c04f79dc55'
+    #        $SID = (Get-ADGroup "Domain Users").SID
+    #        
+    #        $ACL = Get-ACL "AD:\$($NewTempl.distinguishedName)"
+    #        $SID = (Get-ADGroup "Domain Users").SID
+    #        $ACE = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $SID, 'ExtendedRight', 'Allow', $ObjectType, 'None', $InheritedObjectType
+    #        $ACL.AddAccessRule($ACE)
+    #        $SID = (Get-ADGroup "Domain Computers").SID
+    #        $ACE = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $SID, 'ExtendedRight', 'Allow', $ObjectType, 'None', $InheritedObjectType
+    #        $ACL.AddAccessRule($ACE)
+    #        Set-Acl "AD:\$($NewTempl.distinguishedName)" -AclObject $ACL
+    #    }
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to create $TemplateName template" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Created $TemplateName template" -Level Error
+    #}
+    #
+    ##Add Template to CA
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    If (!(Get-CaTemplate | Where Name -like $TemplateName)) {
+    #        Add-CATemplate -Name $Using:TemplateName -Force -Confirm:$False
+    #    }
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to install $TemplateName on $VMName" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Installed $TemplateName on $VMName" -Level Progress
+    #}
 
     #Install Certificate Authority Web Enrollment
     $Error.Clear()
@@ -3351,7 +3477,7 @@ Function Install-BTRCertAuth {
     }Else{
         Write-BTRLog "Install CA Web Enrollment role" -Level Progress
     }
-
+    
     #Configure Certificate Authority Web Enrollment
     $Error.Clear()
     Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
