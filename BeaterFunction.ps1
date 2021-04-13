@@ -516,7 +516,9 @@ Function Configure-BTRServer {
         Write-BTRLog "Determining the right version of ADK to download" -Level Debug
         $InstallFile = "$($env:TEMP)\adksetup.exe"
         $WinVer = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").ReleaseId
-        If ($Winver -eq 1903) {
+        If ($WinVer -eq 2004) {
+            $URL = "https://go.microsoft.com/fwlink/?linkid=2120254"
+        } ElseIf ($Winver -in ("1903","1909")) {
             $URL = "https://go.microsoft.com/fwlink/?linkid=2086042"
         } ElseIf ($WinVer -eq 1809) {
             $URL = " https://go.microsoft.com/fwlink/?linkid=2026036"
