@@ -2730,85 +2730,85 @@ Function Install-BTRExchange {
     Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
         Set-MpPreference -DisableRealtimeMonitoring $True -ErrorAction SilentlyContinue 2>&1 | Out-Null
     }
-    
-    "Creating M: Drive"
-    $Path = "$($Instance.HDDPath)\$VMName-M.vhdx"
-    Hyper-V\New-VHD -Path $Path -SizeBytes 100GB -Dynamic
-    Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $Path
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        Get-Disk | Where PartitionStyle -eq RAW  | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter M
-        Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel "MailStore" -Confirm:$False -Force
-    }
-    
-    "Creating L: Drive"
-    $Path = "$($Instance.HDDPath)\$VMName-L.vhdx"
-    Hyper-V\New-VHD -Path $Path -SizeBytes 50GB -Dynamic
-    Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $Path
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        Get-Disk | Where PartitionStyle -eq RAW | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter L
-        Format-Volume -DriveLetter L -FileSystem NTFS -NewFileSystemLabel "MailLog" -Confirm:$False -Force
-    }
-    
-    Write-BTRLog "Installing UCM 4.0." -Level Debug
-    If (Install-BTRSofware -Name "Unified Communications Managed API 4.0 Runtime" -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" -Installer "UcmaRuntimeSetup.exe" -Args "-q") {
-        Write-BTRLog "     Success!!" -Level Debug
-    }Else{
-        Write-BTRLog "Failed to install UCM 4.0." -Level Error
-        Return $False
-    }
-    
-    Write-BTRLog "Installing VC++ Redistributable 2013." -Level Debug
-    If (Install-BTRSofware -Name "Visual C++ Redistributable Packages for Visual Studio 2013" -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/E/6/2E61CFA4-993B-4DD4-91DA-3737CD5CD6E3/vcredist_x64.exe" -Installer "vcredist_x64.exe" -Args "/passive /norestart") {
-        Write-BTRLog "     Success!!" -Level Debug
-    }Else{
-        Write-BTRLog "Failed to install UCM 4.0." -Level Error
-        Return $False
-    }
-    
-    Write-BTRLog "Installing Pre-Requisites" -Level Debug
-    $Components = @(
-		"NET-Framework-45-Features",
-		"RPC-over-HTTP-proxy",
-		"Web-Mgmt-Console",
-		"WAS-Process-Model",
-		"Web-Asp-Net45",
-		"Web-Basic-Auth",
-		"Web-Client-Auth",
-		"Web-Digest-Auth",
-		"Web-Dir-Browsing",
-		"Web-Dyn-Compression",
-		"Web-Http-Errors",
-		"Web-Http-Logging",
-		"Web-Http-Redirect",
-		"Web-Http-Tracing",
-		"Web-ISAPI-Ext",
-		"Web-ISAPI-Filter",
-		"Web-Lgcy-Mgmt-Console",
-		"Web-Metabase",
-		"Web-Mgmt-Console",
-		"Web-Mgmt-Service",
-		"Web-Net-Ext45",
-		"Web-Request-Monitor",
-		"Web-Server",
-		"Web-Stat-Compression",
-		"Web-Static-Content",
-		"Web-Windows-Auth",
-		"Web-WMI",
-		"Windows-Identity-Foundation"
-	)
-    ForEach ($Component In $Components) {
-        Write-BTRLog "   Installing $Component" -Level Debug
-        $Error.Clear()
-        Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
-            Install-WindowsFeature $Using:Component -IncludeAllSubFeature -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
-        }
-        If ($Error) {
-            Write-BTRLog "Failed to install $Component. Error: $($Error[0].Exception.Message)." -Level Error
-            Return $False
-        }Else{
-            Write-BTRLog "      Sucess!" -Level Debug
-        }
-    }
+    #
+    #"Creating M: Drive"
+    #$Path = "$($Instance.HDDPath)\$VMName-M.vhdx"
+    #Hyper-V\New-VHD -Path $Path -SizeBytes 100GB -Dynamic
+    #Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $Path
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    Get-Disk | Where PartitionStyle -eq RAW  | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter M
+    #    Format-Volume -DriveLetter M -FileSystem NTFS -NewFileSystemLabel "MailStore" -Confirm:$False -Force
+    #}
+    #
+    #"Creating L: Drive"
+    #$Path = "$($Instance.HDDPath)\$VMName-L.vhdx"
+    #Hyper-V\New-VHD -Path $Path -SizeBytes 50GB -Dynamic
+    #Hyper-V\Add-VMHardDiskDrive -VMName $VMName -Path $Path
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    Get-Disk | Where PartitionStyle -eq RAW | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -UseMaximumSize -DriveLetter L
+    #    Format-Volume -DriveLetter L -FileSystem NTFS -NewFileSystemLabel "MailLog" -Confirm:$False -Force
+    #}
+    #
+    #Write-BTRLog "Installing UCM 4.0." -Level Debug
+    #If (Install-BTRSofware -Name "Unified Communications Managed API 4.0 Runtime" -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" -Installer "UcmaRuntimeSetup.exe" -Args "-q") {
+    #    Write-BTRLog "     Success!!" -Level Debug
+    #}Else{
+    #    Write-BTRLog "Failed to install UCM 4.0." -Level Error
+    #    Return $False
+    #}
+    #
+    #Write-BTRLog "Installing VC++ Redistributable 2013." -Level Debug
+    #If (Install-BTRSofware -Name "Visual C++ Redistributable Packages for Visual Studio 2013" -VMName Ex1 -WebLink "https://download.microsoft.com/download/2/E/6/2E61CFA4-993B-4DD4-91DA-3737CD5CD6E3/vcredist_x64.exe" -Installer "vcredist_x64.exe" -Args "/passive /norestart") {
+    #    Write-BTRLog "     Success!!" -Level Debug
+    #}Else{
+    #    Write-BTRLog "Failed to install UCM 4.0." -Level Error
+    #    Return $False
+    #}
+    #
+    #Write-BTRLog "Installing Pre-Requisites" -Level Debug
+    #$Components = @(
+	#	"NET-Framework-45-Features",
+	#	"RPC-over-HTTP-proxy",
+	#	"Web-Mgmt-Console",
+	#	"WAS-Process-Model",
+	#	"Web-Asp-Net45",
+	#	"Web-Basic-Auth",
+	#	"Web-Client-Auth",
+	#	"Web-Digest-Auth",
+	#	"Web-Dir-Browsing",
+	#	"Web-Dyn-Compression",
+	#	"Web-Http-Errors",
+	#	"Web-Http-Logging",
+	#	"Web-Http-Redirect",
+	#	"Web-Http-Tracing",
+	#	"Web-ISAPI-Ext",
+	#	"Web-ISAPI-Filter",
+	#	"Web-Lgcy-Mgmt-Console",
+	#	"Web-Metabase",
+	#	"Web-Mgmt-Console",
+	#	"Web-Mgmt-Service",
+	#	"Web-Net-Ext45",
+	#	"Web-Request-Monitor",
+	#	"Web-Server",
+	#	"Web-Stat-Compression",
+	#	"Web-Static-Content",
+	#	"Web-Windows-Auth",
+	#	"Web-WMI",
+	#	"Windows-Identity-Foundation"
+	#)
+    #ForEach ($Component In $Components) {
+    #    Write-BTRLog "   Installing $Component" -Level Debug
+    #    $Error.Clear()
+    #    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock { 
+    #        Install-WindowsFeature $Using:Component -IncludeAllSubFeature -Confirm:$False -ErrorAction SilentlyContinue *>&1 | Out-Null
+    #    }
+    #    If ($Error) {
+    #        Write-BTRLog "Failed to install $Component. Error: $($Error[0].Exception.Message)." -Level Error
+    #        Return $False
+    #    }Else{
+    #        Write-BTRLog "      Sucess!" -Level Debug
+    #    }
+    #}
     
     #Mount ISO
     Write-BTRLog "Mounting Exchange ISO ($ExchangeISO)" -Level Progress
@@ -2842,6 +2842,8 @@ Function Install-BTRExchange {
         Write-BTRLog "      Sucess!" -Level Debug
     }
     
+    Read-Host 'Hit any key to continue...'
+
     #Run Cumulative Update
     If ($UpdateISO) {
     
@@ -2884,11 +2886,25 @@ Function Install-BTRExchange {
     
     #Disable Cyphers
     Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\DES 56/56" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\NULL" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC2 128/128]8" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC2 40/128" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC2 56/128" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
         REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC4 128/128" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
         REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC4 40/128" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
         REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC4 56/128" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\RC4 64/128" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
         REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\Triple DES 168" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
         REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\Triple DES 168/168" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\Multi-Protocol Unified Hello\Client" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\Multi-Protocol Unified Hello\Server" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\PCT 1.0\Client" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\PCT 1.0\Server" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Client" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Server" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Client" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+        REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Server" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
         REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
         REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client" /v Enabled /t REG_DWORD /d 0 /f 2>&1 | Out-Null
         REG ADD "HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server" /v DisabledByDefault /t REG_DWORD /d 1 /f 2>&1 | Out-Null
@@ -2945,6 +2961,7 @@ Function Configure-BTRExchange {
     $Domain = $Instance.DomainName
     $DNSName = "$VMName.$Domain"
 
+
     #Start PS Session
     $Error.Clear()
     $PSS = New-PSSession -VMName $VMName -Credential $DomainCreds
@@ -2979,20 +2996,18 @@ Function Configure-BTRExchange {
     #}Else{
     #   Write-BTRLog "   Success!" -Level Debug
     #}
-    
-
-
-
-    ##Create MX record
-    #If ($Alias) {
-    #    $Cnames += $Alias
-    #    $MailRecord = $Alias
-    #}Else{
-    #    $MailRecord = $VMName
-    #}
-    #If ($MailRecord -like "*.$Domain") {
-    #    $MailRecord = $MailRecord -replace ".$Domain",""
-    #}
+    #
+    #
+    #Create MX record
+    If ($Alias) {
+        $Cnames += $Alias
+        $MailRecord = $Alias
+    }Else{
+        $MailRecord = $VMName
+    }
+    If ($MailRecord -like "*.$Domain") {
+        $MailRecord = $MailRecord -replace ".$Domain",""
+    }
     #Write-BTRLog "Creating MX record $MailRecord in $Domain" -Level Progress
     #$Error.Clear()
     #Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
@@ -3005,7 +3020,7 @@ Function Configure-BTRExchange {
     #    Write-BTRLog "   Success!" -Level Error
     #}
     #
-    ##Create CNAMEs records
+    #Create CNAMEs records
     #If ($Cnames) {
     #    ForEach ($Cname In $Cnames) {
     #        If ($Cname -like "*.$Domain") {
@@ -3026,36 +3041,67 @@ Function Configure-BTRExchange {
     #        }
     #    }
     #}
+    #
+    #
+    ##Create Certificate
+    #$Subject = "CN=$DNSName"
+    #$SANS = @("$Alias","$Alias.$($Instance.DomainName)","$VMName","$VMName.$($Instance.DomainName)","$Domain")
+    #Write-BTRLog "Creating certificate from template $CertificateTemplateName with Subject:" -Level Progress
+    #Write-BTRLog "SANS: $SANS" -Level Debug
+    #Invoke-Command -Session $PSS -ScriptBlock {
+    #    Get-Certificate -Template $Using:CertificateTemplateName -Url LDAP: -SubjectName $Using:Subject -CertStoreLocation Cert:\LocalMachine\My\ -DnsName $Using:SANS
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "   Failed. Error: $($Error[0].Exception.Message)." -Level Error
+    #    Return
+    #}Else{
+    #    Write-BTRLog "   Success!" -Level Error
+    #}
+    #
+    ##Install Certificate
+    #Write-BTRLog "Assigning certificate with Subject:$Subject to Exchange Services" -Level Progress
+    #Invoke-Command -Session $PSS -ScriptBlock {
+    #    Get-ExchangeCertificate | Where Subject -EQ $Using:Subject | Enable-ExchangeCertificate -Services IIS,SMTP,IMAP,POP -Force -Confirm:$False
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "   Failed. Error: $($Error[0].Exception.Message)." -Level Error
+    #    Return
+    #}Else{
+    #    Write-BTRLog "   Success!" -Level Error
+    #}
 
-    
-    #Create Certificate
-    $Subject = "CN=$DNSName"
-    $SANS = @("$Alias","$Alias.$($Instance.DomainName)","$VMName","$VMName.$($Instance.DomainName)","$Domain")
-    Write-BTRLog "Creating certificate from template $CertificateTemplateName with Subject:" -Level Progress
-    Write-BTRLog "SANS: $SANS" -Level Debug
+    ##configure Accepted Domains
+    #ForEach ($MailDomain In $MailDomains) {
+    #    Write-BTRLog "Adding accepted domain $MailRecord" -Level Progress
+    #    Invoke-Command -Session $PSS -ScriptBlock {
+    #        New-AcceptedDomain -Name $Using:MailRecord -DomainName $Using:MailDomain -DomainType Authoritative -Confirm:$False
+    #    }
+    #    If ($Error) {
+    #        Write-BTRLog "   Failed to add accepted domain $MailDomain. Error: $($Error[0].Exception.Message)." -Level Error
+    #        Return
+    #    }Else{
+    #        Write-BTRLog "   Success!" -Level Error
+    #    }
+    #}
+
+    #Set Virtual Directory URLs
+    Write-BTRLog "Setting Virtual Directory URLs" -Level Progress
     Invoke-Command -Session $PSS -ScriptBlock {
-        Get-Certificate -Template $Using:CertificateTemplateName -Url LDAP: -SubjectName $Using:Subject -CertStoreLocation Cert:\LocalMachine\My\ -DnsName $Using:SANS
+        Get-OwaVirtualDirectory -Server $env:COMPUTERNAME | Set-OwaVirtualDirectory -InternalUrl "https://$($Using:Alias)/OWA" -ExternalUrl "https://$($Using:Alias)/OWA"
+        Get-EcpVirtualDirectory -Server $env:COMPUTERNAME | Set-EcpVirtualDirectory -InternalUrl "https://$($Using:Alias)/ECP" -ExternalUrl "https://$($Using:Alias)/ECP"
+        Get-ActiveSyncVirtualDirectory -Server $env:COMPUTERNAME | Set-ActiveSyncVirtualDirectory -InternalUrl "https://$($Using:Alias)/Microsoft-Server-ActiveSync" -ExternalUrl "https://$($Using:Alias)/Microsoft-Server-ActiveSync"
+        Get-OabVirtualDirectory -Server $env:COMPUTERNAME | Set-OabVirtualDirectory -InternalUrl "https://$($Using:Alias)/OAB" -ExternalUrl "https://$($Using:Alias)/OAB"
+        Get-AutodiscoverVirtualDirectory -Server $env:COMPUTERNAME | Set-AutodiscoverVirtualDirectory -InternalUrl "https://$($Using:Alias)/Autodiscover/Autodiscover.xml" -ExternalUrl "https://$($Using:Alias)/Autodiscover/Autodiscover.xml"
+        Get-WebServicesVirtualDirectory -Server $env:COMPUTERNAME | Set-WebServicesVirtualDirectory -InternalUrl "https://$($Using:Alias)/EWS/Exchange.asmx" -ExternalUrl "https://$($Using:Alias)/EWS/Exchange.asmx"
+        Get-OutlookAnywhere | Set-OutlookAnywhere -InternalHostname $Using:Alias -ExternalHostname $Using:Alias -ExternalClientsRequireSsl $True -InternalClientsRequireSsl $True -ExternalClientAuthenticationMethod Negotiate
+        Get-MapiVirtualDirectory | Set-MapiVirtualDirectory -InternalUrl "https://$($Using:Alias)/mapi" -ExternalUrl "https://$($Using:Alias)/mapi"
     }
     If ($Error) {
-        Write-BTRLog "   Failed. Error: $($Error[0].Exception.Message)." -Level Error
+        Write-BTRLog "   Failed to configure Virtual Directories. Error: $($Error[0].Exception.Message)." -Level Error
         Return
     }Else{
         Write-BTRLog "   Success!" -Level Error
     }
-
-    #Install Certificate
-    Write-BTRLog "Assigning certificate with Subject:$Subject to Exchange Services" -Level Progress
-    Invoke-Command -Session $PSS -ScriptBlock {
-        Get-ExchangeCertificate | Where Subject -EQ $Using:Subject | Enable-ExchangeCertificate -Services IIS,SMTP,IMAP,POP -Force -Confirm:$False
-    }
-    If ($Error) {
-        Write-BTRLog "   Failed. Error: $($Error[0].Exception.Message)." -Level Error
-        Return
-    }Else{
-        Write-BTRLog "   Success!" -Level Error
-    }
-
-
 
     Remove-PSSession -Session $PSS
 
@@ -3231,179 +3277,228 @@ Function Install-BTRCertAuth {
         Return $False
     }
     
-    #Install Web Server Role
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        Install-WindowsFeature -name Web-Server -IncludeManagementTools `
-            -Confirm:$False -ErrorAction SilentlyContinue 2>&1 | Out-Null
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to install IIS role" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Installed IIS Role" -Level Progress
-    }
-    
-    #Create folder for CDP
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        New-Item -Path C:\PKI -ItemType Directory -Force -Confirm:$False 2>&1 | Out-Null
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to create C:\PKI" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Created C:\PKI" -Level Progress
-    }
-    
-    #Create PKI virtual folder
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        New-WebVirtualDirectory -Name PKI -Site "Default Web Site" `
-            -PhysicalPath "C:\PKI" `
-            -Force -ErrorAction SilentlyContinue 2>&1 | Out-Null
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to create PKI Virtual Folder" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Created PKI virtual folder" -Level Progress
-    }
-    
-    #Allow Double Escaping
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        C:\Windows\System32\inetsrv\appcmd set config /section:requestfiltering /allowdoubleescaping:true 2>&1 | Out-Null
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to configure double escaping" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Configured double escaping" -Level Error
-    
-    }
-    
-    #Create CNAME in DNS
-    $ZoneName = $Instance.DomainName
-    $PKiName = "$VMName`.$ZoneName"
-    $Error.Clear()
-    Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
-        If (!(Get-DnsServerResourceRecord -ZoneName $Using:Zonename | Where HostName -like 'PKI')) {
-            Add-DnsServerResourceRecordCName -ZoneName $Using:Zonename -Name "PKI" -HostNameAlias $Using:PKiName
-        }
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to create CNAME for PKI" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Created CNAME for PKI" -Level Error
-    }
-    
-    
-    #Install CA Role
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        Add-WindowsFeature Adcs-Cert-Authority -IncludeManagementTools 2>&1 | Out-Null
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to install CA role" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Install CA role" -Level Progress
-    }
-    
-    #Setup CA Role
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        Try {
-            Install-AdcsCertificationAuthority `
-                -CAType EnterpriseRootCA `
-                -ValidityPeriodUnits 20 `
-                -ValidityPeriod Years `
-                -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" `
-                -KeyLength 4096 `
-                -HashAlgorithmName SHA256 `
-                -Force `
-                -Confirm:$False -ErrorAction SilentlyContinue 2>&1 | Out-Null
-        }Catch{
-            #Just to shut it up
-        }
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to configure CA role" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Configued CA Role" -Level Progress
-    }
-    
-    #Configure CA in Registry
-    $Path = "HKLM:/SYSTEM/CurrentControlSet/Services/CertSvc/Configuration/$($Instance.NBDomainName)-$VMName-CA"
-    $CAPublish = @(
-        "1:C:\Windows\system32\CertSrv\CertEnroll\%1_%3%4.crt",
-        "2:http://PKI.$($Instance.DomainName)/PKI/%1_%3%4.crt",
-        "2:ldap:///CN=%7,CN=AIA,CN=Public Key Services,CN=Services,%6%11"
-    )
-    $CRLPublish = @(
-        "1:C:\Windows\system32\CertSrv\CertEnroll\%3%8%9.crl",
-        "2:http://PKI.$($Instance.DomainName)/PKI/%3%8%9.crl",
-        "10:ldap:///CN=%7%8,CN=%2,CN=CDP,CN=Public Key Services,CN=Services,%6%10",
-        "65:file://C:\PKI\%3%8%9.crl"
-    )
-    
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        $Path = $Using:Path
-        Get-Service | Where Name -eq certsvc | Stop-Service
-        Start-Sleep 3
-        Set-ItemProperty -Path $Path -Name CRLPeriodUnits -Value 3
-        Set-ItemProperty -Path $Path -Name CRLPeriod -Value “Days”
-        Set-ItemProperty -Path $Path -Name CRLDeltaPeriodUnits -Value 0
-        Set-ItemProperty -Path $Path -Name CRLDeltaPeriod -Value “Days”
-        Set-ItemProperty -Path $Path -Name CRLOverlapUnits -Value 3
-        Set-ItemProperty -Path $Path -Name CRLPeriod -Value “Days”
-        Set-ItemProperty -Path $Path -Name ValidityPeriodUnits -Value 2
-        Set-ItemProperty -Path $Path -Name ValidityPeriod -Value “Years”
-        Set-ItemProperty -Path $Path -Name AuditFilter -Value 127
-        Set-ItemProperty -Path $Path -Name CACertPublicationURLs -Value $Using:CAPublish
-        Set-ItemProperty -Path $Path -Name CRLPublicationURLs -Value $Using:CRLPublish
-        Get-Service | Where Name -eq certsvc | Start-Service
-        Start-Sleep 5
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to add CA config to registry" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Added CA config to registry" -Level Progress
-    }
-    
-    #Publish certificates and CRL
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        Certutil -CRL  2>&1 | Out-Null
-        Copy-Item C:\Windows\System32\certsrv\certenroll\* C:\PKI -Force
-        $RootCertName = Get-Item -Path C:\Windows\System32\CertSrv\CertEnroll\* | Where Name -like "*CA.crt" |Select -ExpandProperty FullName
-        Start-Process -FilePath C:\Windows\System32\certutil.exe -ArgumentList "-­f ­-dspublish $RootCertName RootCA" 2>&1 | Out-Null
-        $RootCRLName = Get-Item -Path C:\Windows\System32\CertSrv\CertEnroll\* | Where Name -like "*CA.crl" |Select -ExpandProperty FullName
-        Start-Process -FilePath C:\Windows\System32\certutil.exe -ArgumentList "-­f ­-dspublish $RootCRLName" 2>&1 | Out-Null
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to plush CA and CRL" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Published CA and CRL" -Level Progress
-    }
+    ##Install Web Server Role
+    #Write-BTRLog "Installing Web Server role" -Level Progress
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    Install-WindowsFeature -name Web-Server -IncludeManagementTools `
+    #        -Confirm:$False -ErrorAction SilentlyContinue 2>&1 | Out-Null
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to install IIS role" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Installed IIS Role" -Level Progress
+    #}
+    #
+    ##Create folder for CDP
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    New-Item -Path C:\PKI -ItemType Directory -Force -Confirm:$False 2>&1 | Out-Null
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to create C:\PKI" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Created C:\PKI" -Level Progress
+    #}
+    #
+    ##Create PKI virtual folder
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    New-WebVirtualDirectory -Name PKI -Site "Default Web Site" `
+    #        -PhysicalPath "C:\PKI" `
+    #        -Force -ErrorAction SilentlyContinue 2>&1 | Out-Null
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to create PKI Virtual Folder" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Created PKI virtual folder" -Level Progress
+    #}
+    #
+    ##Allow Double Escaping
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    C:\Windows\System32\inetsrv\appcmd set config /section:requestfiltering /allowdoubleescaping:true 2>&1 | Out-Null
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to configure double escaping" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Configured double escaping" -Level Error
+    #
+    #}
+    #
+    ##Create CNAME in DNS
+    #$ZoneName = $Instance.DomainName
+    #$PKiName = "$VMName`.$ZoneName"
+    #$Error.Clear()
+    #Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+    #    If (!(Get-DnsServerResourceRecord -ZoneName $Using:Zonename | Where HostName -like 'PKI')) {
+    #        Add-DnsServerResourceRecordCName -ZoneName $Using:Zonename -Name "PKI" -HostNameAlias $Using:PKiName
+    #    }
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to create CNAME for PKI" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Created CNAME for PKI" -Level Error
+    #}
+    #
+    #
+    ##Install CA Role
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    Add-WindowsFeature Adcs-Cert-Authority -IncludeManagementTools 2>&1 | Out-Null
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to install CA role" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Install CA role" -Level Progress
+    #}
+    #
+    ##Setup CA Role
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    Try {
+    #        Install-AdcsCertificationAuthority `
+    #            -CAType EnterpriseRootCA `
+    #            -ValidityPeriodUnits 20 `
+    #            -ValidityPeriod Years `
+    #            -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" `
+    #            -KeyLength 4096 `
+    #            -HashAlgorithmName SHA256 `
+    #            -Force `
+    #            -Confirm:$False -ErrorAction SilentlyContinue 2>&1 | Out-Null
+    #    }Catch{
+    #        #Just to shut it up
+    #    }
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to configure CA role" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Configued CA Role" -Level Progress
+    #}
+    #
+    ##Configure CA in Registry
+    #$Path = "HKLM:/SYSTEM/CurrentControlSet/Services/CertSvc/Configuration/$($Instance.NBDomainName)-$VMName-CA"
+    #$CAPublish = @(
+    #    "1:C:\Windows\system32\CertSrv\CertEnroll\%1_%3%4.crt",
+    #    "2:http://PKI.$($Instance.DomainName)/PKI/%1_%3%4.crt",
+    #    "2:ldap:///CN=%7,CN=AIA,CN=Public Key Services,CN=Services,%6%11"
+    #)
+    #$CRLPublish = @(
+    #    "1:C:\Windows\system32\CertSrv\CertEnroll\%3%8%9.crl",
+    #    "2:http://PKI.$($Instance.DomainName)/PKI/%3%8%9.crl",
+    #    "10:ldap:///CN=%7%8,CN=%2,CN=CDP,CN=Public Key Services,CN=Services,%6%10",
+    #    "65:file://C:\PKI\%3%8%9.crl"
+    #)
+    #
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    $Path = $Using:Path
+    #    Get-Service | Where Name -eq certsvc | Stop-Service
+    #    Start-Sleep 3
+    #    Set-ItemProperty -Path $Path -Name CRLPeriodUnits -Value 3
+    #    Set-ItemProperty -Path $Path -Name CRLPeriod -Value “Days”
+    #    Set-ItemProperty -Path $Path -Name CRLDeltaPeriodUnits -Value 0
+    #    Set-ItemProperty -Path $Path -Name CRLDeltaPeriod -Value “Days”
+    #    Set-ItemProperty -Path $Path -Name CRLOverlapUnits -Value 3
+    #    Set-ItemProperty -Path $Path -Name CRLPeriod -Value “Days”
+    #    Set-ItemProperty -Path $Path -Name ValidityPeriodUnits -Value 2
+    #    Set-ItemProperty -Path $Path -Name ValidityPeriod -Value “Years”
+    #    Set-ItemProperty -Path $Path -Name AuditFilter -Value 127
+    #    Set-ItemProperty -Path $Path -Name CACertPublicationURLs -Value $Using:CAPublish
+    #    Set-ItemProperty -Path $Path -Name CRLPublicationURLs -Value $Using:CRLPublish
+    #    Get-Service | Where Name -eq certsvc | Start-Service
+    #    Start-Sleep 5
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to add CA config to registry" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Added CA config to registry" -Level Progress
+    #}
+    #
+    ##Publish certificates and CRL
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    Certutil -CRL  2>&1 | Out-Null
+    #    Copy-Item C:\Windows\System32\certsrv\certenroll\* C:\PKI -Force
+    #    $RootCertName = Get-Item -Path C:\Windows\System32\CertSrv\CertEnroll\* | Where Name -like "*CA.crt" |Select -ExpandProperty FullName
+    #    Start-Process -FilePath C:\Windows\System32\certutil.exe -ArgumentList "-­f ­-dspublish $RootCertName RootCA" 2>&1 | Out-Null
+    #    $RootCRLName = Get-Item -Path C:\Windows\System32\CertSrv\CertEnroll\* | Where Name -like "*CA.crl" |Select -ExpandProperty FullName
+    #    Start-Process -FilePath C:\Windows\System32\certutil.exe -ArgumentList "-­f ­-dspublish $RootCRLName" 2>&1 | Out-Null
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to plush CA and CRL" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Published CA and CRL" -Level Progress
+    #}
 
-    ##Create Web Server CA Template
-    #$TemplateName = "$($Instance.Name)Web"
+    ##Download PKI PS Module
+    #If (!(Test-Path "$($Instance.WorkingFolder)\PSPKI")) {
+    #    Write-BTRLog "PSPKI not downloaded.  Downloading." -Level Debug
+    #    $Error.Clear
+    #    Save-Module -Name PSPKI -Path $Instance.WorkingFolder -ErrorAction SilentlyContinue -Force
+    #    If ($Error) {
+    #        Write-BTRLog "  Failed to download PSPKI module" -Level Error
+    #        Return $False
+    #    }Else{
+    #        Write-BTRLog "   Success!" -Level Progress
+    #    }
+    #}Else{
+    #    Write-BTRLog "PSPKI has already been downloaded.  Using that" -Level Debug
+    #}
+    #
+    ##Copy PSPKI to VM
+    #Write-BTRLog "Copying PSPKI from $($Instance.WorkingFolder)\PSPKI to C:\Program Files\WindowsPowerShell\Modules\PSPKI on VM $VMName" -Level Debug
+    #$Error.Clear
+    #Get-ChildItem "$($Instance.WorkingFolder)\PSPKI" -Recurse -File | ForEach {Copy-VMFile -Name $VMName -SourcePath $_.FullName -DestinationPath $_.FullName.replace("C:\WSUS\Working","C:\Temp") -FileSource Host -CreateFullPath -Force }
+    #If ($Error) {
+    #    Write-BTRLog "  Failed to copy PSPKI module" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "   Success!" -Level Progress
+    #}
+    #
+    ##Copy PKIPS to Modules folder
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    Copy-Item -Path 'C:\Temp\PSPKI' -Destination 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -Force -ErrorAction SilentlyContinue
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "  Failed to install PSPKI module" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "   Success!" -Level Progress
+    #}
+
+    #Create Web Server Template
+    #$TemplateName = "$($Instance.Name) Web"
     #$Error.Clear()
     #Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
     #    $TemplateName = $Using:TemplateName
     #    $ConfigContext = ([ADSI]"LDAP://RootDSE").ConfigurationNamingContext 
-    #    If (!(Test-Path ("AD:\CN=$TemplateName,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"))) {
-    #        #Figure Out OID for the new certificate
+    #    If (!(Test-Path "AD:\CN=$TemplateName,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext" -ErrorAction SilentlyContinue )) {
     #
-    #        
-    #        
+    #        #Figure out OIDs
+    #        $ForestOID = Get-ADObject -Identity "CN=OID,CN=Public Key Services,CN=Services,$ConfigContext" -Properties msPKI-Cert-Template-OID | Select-Object -ExpandProperty msPKI-Cert-Template-OID
+    #        $HexCharacters = '0123456789ABCDEF'
+    #        Do {
+    #            $CommonPart = Get-Random -Minimum 1000000 -Maximum 9999999
+    #            [String]$HexPart = 0
+    #            For ($I = 1; $I -le 32; $I++) {
+    #                $HexPart += $HexCharacters.Substring((Get-Random -Minimum 0 -Maximum 15),1)
+    #            }
+    #            $TemplateOID = "$ForestOID.$(Get-Random -Minimum 10000000 -Maximum 99999999).$CommonPart"
+    #            $OIDName = "$CommonPart.$HexPart"
+    #        } until (!(Get-ADObject -SearchBase "CN=OID,CN=Public Key Services,CN=Services,$ConfigContext" -Filter {msPKI-Cert-Template-OID -eq $TemplateOID}))
+    #
     #        #Create Certificate
     #        $ADSI = [ADSI]"LDAP://CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"
     #        $CopyFrom = [ADSI]"LDAP://CN=WebServer,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext"
@@ -3411,17 +3506,18 @@ Function Install-BTRCertAuth {
     #        $NewTempl.SetInfo()
     #        
     #        #Configure Certificate
+    #        $NewTempl.Put("flags", 131649)
     #        $NewTempl.Put("msPKI-Certificate-Application-Policy", "1.3.6.1.5.5.7.3.1")
     #        $NewTempl.Put("msPKI-Certificate-Name-Flag", "1")
-    #        $NewTempl.Put("msPKI-Cert-Template-OID", "1.3.6.1.4.1.311.21.8.3896987.12586729.15221910.6745566.13247975.13.14940856.8588888")
+    #        $NewTempl.Put("msPKI-Cert-Template-OID", $TemplateOID)
     #        $NewTempl.Put("msPKI-Enrollment-Flag", "0")
     #        $NewTempl.Put("msPKI-Minimal-Key-Size", "2048")
-    #        $NewTempl.Put("msPKI-Private-Key-Flag", "16842752")
+    #        $NewTempl.Put("msPKI-Private-Key-Flag", "101056784")
     #        $NewTempl.Put("msPKI-RA-Signature", "0")
     #        $NewTempl.Put("msPKI-Template-Minor-Revision", "4")
     #        $NewTempl.Put("msPKI-Template-Schema-Version", "4")
     #        $NewTempl.pKICriticalExtensions = "2.5.29.15"
-    #        $NewTempl.pKIDefaultCSPs = @("1,Microsoft RSA SChannel Cryptographic Provider","2,Microsoft DH SChannel Cryptographic Provider")
+    #        $NewTempl.pKIDefaultCSPs = @("1,Microsoft RSA SChannel Cryptographic Provider")
     #        $NewTempl.pKIDefaultKeySpec = 1
     #        $NewTempl.pKIExpirationPeriod = $CopyFrom.pKIExpirationPeriod
     #        $NewTempl.pKIExtendedKeyUsage = "1.3.6.1.5.5.7.3.1"
@@ -3429,6 +3525,13 @@ Function Install-BTRCertAuth {
     #        $NewTempl.pKIMaxIssuingDepth = 0
     #        $NewTempl.pKIOverlapPeriod = $CopyFrom.pKIOverlapPeriod
     #        $NewTempl.SetInfo()
+    #
+    #        #Create OID object
+    #        $OtherAttributes = @{
+    #            'flags' = [System.Int32]'1'
+    #            'msPKI-Cert-Template-OID' = $TemplateOID
+    #        }
+    #        New-ADObject -Path "CN=OID,CN=Public Key Services,CN=Services,$ConfigContext" -OtherAttributes $OtherAttributes  -Name $OIDName -Type 'msPKI-Enterprise-Oid'
     #        
     #        #Grant Authenticated Users Enroll Rights
     #        $InheritedObjectType = [GUID]'00000000-0000-0000-0000-000000000000'
@@ -3436,10 +3539,10 @@ Function Install-BTRCertAuth {
     #        $SID = (Get-ADGroup "Domain Users").SID
     #        
     #        $ACL = Get-ACL "AD:\$($NewTempl.distinguishedName)"
-    #        $SID = (Get-ADGroup "Domain Users").SID
+    #        $SID = (Get-ADGroup "Domain Computers").SID
     #        $ACE = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $SID, 'ExtendedRight', 'Allow', $ObjectType, 'None', $InheritedObjectType
     #        $ACL.AddAccessRule($ACE)
-    #        $SID = (Get-ADGroup "Domain Computers").SID
+    #        $SID = (Get-ADGroup "Domain Controllers").SID
     #        $ACE = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $SID, 'ExtendedRight', 'Allow', $ObjectType, 'None', $InheritedObjectType
     #        $ACL.AddAccessRule($ACE)
     #        Set-Acl "AD:\$($NewTempl.distinguishedName)" -AclObject $ACL
@@ -3455,7 +3558,7 @@ Function Install-BTRCertAuth {
     ##Add Template to CA
     #$Error.Clear()
     #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-    #    If (!(Get-CaTemplate | Where Name -like $TemplateName)) {
+    #    If (!(Get-CaTemplate | Where Name -like $Using:TemplateName)) {
     #        Add-CATemplate -Name $Using:TemplateName -Force -Confirm:$False
     #    }
     #}
@@ -3466,33 +3569,106 @@ Function Install-BTRCertAuth {
     #    Write-BTRLog "Installed $TemplateName on $VMName" -Level Progress
     #}
 
-    #Install Certificate Authority Web Enrollment
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        Add-WindowsFeature ADCS-Web-Enrollment -IncludeManagementTools 2>&1 | Out-Null
-    }
+    ##Create Certifciate for web server
+    #Write-BTRLog "Creating certificate for web server"
+    #$Error.Clear()
+    #Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+    #    Get-Certificate -Url "LDAP:" -Template "$($Using:Instance.Name) Web" -SubjectName "CN=PKI.$($Using:Instance.DomainName)" -DnsName @("PKI.$($Using:Instance.DomainName)","PKI","$($env:COMPUTERNAME).$($Using:Instance.DomainName)","$($env:COMPUTERNAME)") -CertStoreLocation Cert:\LocalMachine\My 2>&1 | Out-Null
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to get SSL Cert" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Retreived SSL cert for web server" -Level Progress
+    #}
+
+    ##Install Certificate Authority Web Enrollment
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    Add-WindowsFeature ADCS-Web-Enrollment -IncludeManagementTools 2>&1 | Out-Null
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to install CA web Enrollment role" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Install CA Web Enrollment role" -Level Progress
+    #}
+    #
+    ##Configure Certificate Authority Web Enrollment
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    Try {
+    #        Install-AdcsWebEnrollment -Confirm:$False -Force 
+    #    }Catch{
+    #        #Just to shut it up
+    #    }
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to configure CA web Enrollment role" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "Configured CA Web Enrollment role" -Level Progress
+    #}
+
+    ##Add port 443 binding for default web site
+    #Write-BTRLog "Adding SSL binding to default web site"
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    $Thumbprint = Get-ChildItem Cert:\LocalMachine\My | Where Subject -eq "CN=PKI.$($Using:Instance.DomainName)" | Select -ExpandProperty Thumbprint
+    #    Import-Module IISAdministration
+    #    New-IISSiteBinding -Name "Default Web Site" -BindingInformation "*:443:" -CertificateThumbPrint $Thumbprint -Protocol https -CertStoreLocation Cert:\LocalMachine\My
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to add SLL binding to default website" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "     Success" -Level Debug
+    #}
+
+    ##Require SSL on CertSrv folder
+    #Write-BTRLog "Adding SSL binding to default web site"
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    $Thumbprint = Get-ChildItem Cert:\LocalMachine\My | Where Subject -eq "CN=PKI.$($Using:Instance.DomainName)" | Select -ExpandProperty Thumbprint
+    #    Import-Module IISAdministration
+    #    $ConfigSection = Get-IISConfigSection -SectionPath "system.webServer/security/access" -Location "Default Web Site/CertSrv"
+    #    Set-IISConfigAttributeValue -AttributeName sslFlags -AttributeValue Ssl -ConfigElement $ConfigSection
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to add SLL binding to default website" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "     Success" -Level Debug
+    #}
+
+    ##redirect default to /CertSrv
+    #Write-BTRLog "Setting redirect to /CertSrv"
+    #$Error.Clear()
+    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    #    Import-Module IISAdministration
+    #    Get-IISConfigSection -SectionPath "system.webServer/httpRedirect" -Location "Default Web Site" | Set-IISConfigAttributeValue -AttributeName enabled -AttributeValue $True
+    #    Get-IISConfigSection -SectionPath "system.webServer/httpRedirect" -Location "Default Web Site" | Set-IISConfigAttributeValue -AttributeName destination -AttributeValue "https://pki.catest.local/CertSrv"
+    #    Get-IISConfigSection -SectionPath "system.webServer/httpRedirect" -Location "Default Web Site" | Set-IISConfigAttributeValue -AttributeName childOnly -AttributeValue $False
+    #}
+    #If ($Error) {
+    #    Write-BTRLog "Failed to add SLL binding to default website" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "     Success" -Level Debug
+    #}
+
+    #Copy PKI GPO
+    $GPOFolder = "$PSScriptRoot\CertificateAuthority\PKI GPO\"
+    Write-BTRLog "Copying PSPKI from $GPOFolder to C:\Temp" -Level Debug
+    $Error.Clear
+    Get-ChildItem $GPOFolder -Recurse -File | ForEach {Copy-VMFile -Name $VMName -SourcePath $_.FullName -DestinationPath $_.FullName.replace($GPOFolder,"C:\Temp\") -FileSource Host -CreateFullPath -Force }
     If ($Error) {
-        Write-BTRLog "Failed to install CA web Enrollment role" -Level Error
+        Write-BTRLog "  Failed to copy PKI GPO folder" -Level Error
         Return $False
     }Else{
-        Write-BTRLog "Install CA Web Enrollment role" -Level Progress
+        Write-BTRLog "   Success!" -Level Progress
     }
-    
-    #Configure Certificate Authority Web Enrollment
-    $Error.Clear()
-    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-        Try {
-            Install-AdcsWebEnrollment -Confirm:$False -Force 
-        }Catch{
-            #Just to shut it up
-        }
-    }
-    If ($Error) {
-        Write-BTRLog "Failed to configure CA web Enrollment role" -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "Configured CA Web Enrollment role" -Level Progress
-    }
+
 
 }
 
@@ -3633,4 +3809,15 @@ Function New-BtrUsers {
             }
         }   
     } 
+}
+
+
+Function Get-RandomHex {
+    param ([int]$Length)
+    $Hex = '0123456789ABCDEF'
+    [string]$Return = $null
+    For ($i=1;$i -le $length;$i++) {
+        $Return += $Hex.Substring((Get-Random -Minimum 0 -Maximum 16),1)
+    }
+    Return $Return
 }
