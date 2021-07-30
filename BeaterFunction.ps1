@@ -448,7 +448,7 @@ Function Get-BtrNextIP {
     #    Get-DnsServerResourceRecord -ZoneName $using:Instance.DomainName | Where RecordType -EQ 'A' | Select -ExpandProperty RecordData | Select -ExpandProperty IPv4Address | Select -ExpandProperty IPAddressToString | Sort | Select -Last 1
     #}
     Write-BTRLog "Getting Last IP on switch $($Instance.SwitchName)" -Level Debug
-    If ($IP = Get-VM | Select -ExpandProperty NetworkAdapters | Where SwitchName -eq $Instance.SwitchName | Select -ExpandProperty IPAddresses | Sort -Descending | Select -First 1) {
+    If ($IP = (Get-VM | Select -ExpandProperty NetworkAdapters | Where SwitchName -eq $Instance.SwitchName | Select -ExpandProperty IPAddresses) -Match "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$" | Sort -Descending | Select -First 1) {
         Write-BTRLog "Last IP on switch is $IP" -Level Debug
     }Else{
         $IP = "$($Instance.IPPrefix).50"
@@ -3441,7 +3441,7 @@ Function Install-BTRCertAuth {
     #}Else{
     #    Write-BTRLog "Published CA and CRL" -Level Progress
     #}
-
+    #
     ##Download PKI PS Module
     #If (!(Test-Path "$($Instance.WorkingFolder)\PSPKI")) {
     #    Write-BTRLog "PSPKI not downloaded.  Downloading." -Level Debug
@@ -3457,33 +3457,33 @@ Function Install-BTRCertAuth {
     #    Write-BTRLog "PSPKI has already been downloaded.  Using that" -Level Debug
     #}
     #
-    ##Copy PSPKI to VM
-    #Write-BTRLog "Copying PSPKI from $($Instance.WorkingFolder)\PSPKI to C:\Program Files\WindowsPowerShell\Modules\PSPKI on VM $VMName" -Level Debug
-    #$Error.Clear
-    #Get-ChildItem "$($Instance.WorkingFolder)\PSPKI" -Recurse -File | ForEach {Copy-VMFile -Name $VMName -SourcePath $_.FullName -DestinationPath $_.FullName.replace("C:\WSUS\Working","C:\Temp") -FileSource Host -CreateFullPath -Force }
-    #If ($Error) {
-    #    Write-BTRLog "  Failed to copy PSPKI module" -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "   Success!" -Level Progress
-    #}
-    #
-    ##Copy PKIPS to Modules folder
+    ###Copy PSPKI to VM
+    ##Write-BTRLog "Copying PSPKI from $($Instance.WorkingFolder)\PSPKI to C:\Program Files\WindowsPowerShell\Modules\PSPKI on VM $VMName" -Level Debug
+    ##$Error.Clear
+    ##Get-ChildItem "$($Instance.WorkingFolder)\PSPKI" -Recurse -File | ForEach {Copy-VMFile -Name $VMName -SourcePath $_.FullName -DestinationPath $_.FullName.replace("C:\WSUS\Working","C:\Temp") -FileSource Host -CreateFullPath -Force }
+    ##If ($Error) {
+    ##    Write-BTRLog "  Failed to copy PSPKI module" -Level Error
+    ##    Return $False
+    ##}Else{
+    ##    Write-BTRLog "   Success!" -Level Progress
+    ##}
+    ##
+    ###Copy PKIPS to Modules folder
+    ##$Error.Clear()
+    ##Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+    ##    Copy-Item -Path 'C:\Temp\PSPKI' -Destination 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -Force -ErrorAction SilentlyContinue
+    ##}
+    ##If ($Error) {
+    ##    Write-BTRLog "  Failed to install PSPKI module" -Level Error
+    ##    Return $False
+    ##}Else{
+    ##    Write-BTRLog "   Success!" -Level Progress
+    ##}
+
+    ##Create Web Server Template
+    $TemplateName = "$($Instance.Name) Web"
     #$Error.Clear()
     #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-    #    Copy-Item -Path 'C:\Temp\PSPKI' -Destination 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -Force -ErrorAction SilentlyContinue
-    #}
-    #If ($Error) {
-    #    Write-BTRLog "  Failed to install PSPKI module" -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "   Success!" -Level Progress
-    #}
-
-    #Create Web Server Template
-    #$TemplateName = "$($Instance.Name) Web"
-    #$Error.Clear()
-    #Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
     #    $TemplateName = $Using:TemplateName
     #    $ConfigContext = ([ADSI]"LDAP://RootDSE").ConfigurationNamingContext 
     #    If (!(Test-Path "AD:\CN=$TemplateName,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigContext" -ErrorAction SilentlyContinue )) {
@@ -3556,120 +3556,120 @@ Function Install-BTRCertAuth {
     #}Else{
     #    Write-BTRLog "Created $TemplateName template" -Level Error
     #}
-    #
-    ##Add Template to CA
-    #$Error.Clear()
-    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-    #    If (!(Get-CaTemplate | Where Name -like $Using:TemplateName)) {
-    #        Add-CATemplate -Name $Using:TemplateName -Force -Confirm:$False
-    #    }
-    #}
-    #If ($Error) {
-    #    Write-BTRLog "Failed to install $TemplateName on $VMName" -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "Installed $TemplateName on $VMName" -Level Progress
-    #}
-
-    ##Create Certifciate for web server
-    #Write-BTRLog "Creating certificate for web server"
-    #$Error.Clear()
-    #Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
-    #    Get-Certificate -Url "LDAP:" -Template "$($Using:Instance.Name) Web" -SubjectName "CN=PKI.$($Using:Instance.DomainName)" -DnsName @("PKI.$($Using:Instance.DomainName)","PKI","$($env:COMPUTERNAME).$($Using:Instance.DomainName)","$($env:COMPUTERNAME)") -CertStoreLocation Cert:\LocalMachine\My 2>&1 | Out-Null
-    #}
-    #If ($Error) {
-    #    Write-BTRLog "Failed to get SSL Cert" -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "Retreived SSL cert for web server" -Level Progress
-    #}
-
-    ##Install Certificate Authority Web Enrollment
-    #$Error.Clear()
-    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-    #    Add-WindowsFeature ADCS-Web-Enrollment -IncludeManagementTools 2>&1 | Out-Null
-    #}
-    #If ($Error) {
-    #    Write-BTRLog "Failed to install CA web Enrollment role" -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "Install CA Web Enrollment role" -Level Progress
-    #}
-    #
-    ##Configure Certificate Authority Web Enrollment
-    #$Error.Clear()
-    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-    #    Try {
-    #        Install-AdcsWebEnrollment -Confirm:$False -Force 
-    #    }Catch{
-    #        #Just to shut it up
-    #    }
-    #}
-    #If ($Error) {
-    #    Write-BTRLog "Failed to configure CA web Enrollment role" -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "Configured CA Web Enrollment role" -Level Progress
-    #}
-
-    ##Add port 443 binding for default web site
-    #Write-BTRLog "Adding SSL binding to default web site"
-    #$Error.Clear()
-    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-    #    $Thumbprint = Get-ChildItem Cert:\LocalMachine\My | Where Subject -eq "CN=PKI.$($Using:Instance.DomainName)" | Select -ExpandProperty Thumbprint
-    #    Import-Module IISAdministration
-    #    New-IISSiteBinding -Name "Default Web Site" -BindingInformation "*:443:" -CertificateThumbPrint $Thumbprint -Protocol https -CertStoreLocation Cert:\LocalMachine\My
-    #}
-    #If ($Error) {
-    #    Write-BTRLog "Failed to add SLL binding to default website" -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "     Success" -Level Debug
-    #}
-
-    ##Require SSL on CertSrv folder
-    #Write-BTRLog "Adding SSL binding to default web site"
-    #$Error.Clear()
-    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-    #    $Thumbprint = Get-ChildItem Cert:\LocalMachine\My | Where Subject -eq "CN=PKI.$($Using:Instance.DomainName)" | Select -ExpandProperty Thumbprint
-    #    Import-Module IISAdministration
-    #    $ConfigSection = Get-IISConfigSection -SectionPath "system.webServer/security/access" -Location "Default Web Site/CertSrv"
-    #    Set-IISConfigAttributeValue -AttributeName sslFlags -AttributeValue Ssl -ConfigElement $ConfigSection
-    #}
-    #If ($Error) {
-    #    Write-BTRLog "Failed to add SLL binding to default website" -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "     Success" -Level Debug
-    #}
-
-    ##redirect default to /CertSrv
-    #Write-BTRLog "Setting redirect to /CertSrv"
-    #$Error.Clear()
-    #Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
-    #    Import-Module IISAdministration
-    #    Get-IISConfigSection -SectionPath "system.webServer/httpRedirect" -Location "Default Web Site" | Set-IISConfigAttributeValue -AttributeName enabled -AttributeValue $True
-    #    Get-IISConfigSection -SectionPath "system.webServer/httpRedirect" -Location "Default Web Site" | Set-IISConfigAttributeValue -AttributeName destination -AttributeValue "https://pki.catest.local/CertSrv"
-    #    Get-IISConfigSection -SectionPath "system.webServer/httpRedirect" -Location "Default Web Site" | Set-IISConfigAttributeValue -AttributeName childOnly -AttributeValue $False
-    #}
-    #If ($Error) {
-    #    Write-BTRLog "Failed to add SLL binding to default website" -Level Error
-    #    Return $False
-    #}Else{
-    #    Write-BTRLog "     Success" -Level Debug
-    #}
-
-    #Copy PKI GPO
-    $GPOFolder = "$PSScriptRoot\CertificateAuthority\PKI GPO\"
-    Write-BTRLog "Copying PSPKI from $GPOFolder to C:\Temp" -Level Debug
-    $Error.Clear
-    Get-ChildItem $GPOFolder -Recurse -File | ForEach {Copy-VMFile -Name $VMName -SourcePath $_.FullName -DestinationPath $_.FullName.replace($GPOFolder,"C:\Temp\") -FileSource Host -CreateFullPath -Force }
+    
+    #Add Template to CA
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        If (!(Get-CaTemplate | Where Name -like $Using:TemplateName)) {
+            Add-CATemplate -Name $Using:TemplateName -Force -Confirm:$False
+        }
+    }
     If ($Error) {
-        Write-BTRLog "  Failed to copy PKI GPO folder" -Level Error
+        Write-BTRLog "Failed to install $TemplateName on $VMName" -Level Error
         Return $False
     }Else{
-        Write-BTRLog "   Success!" -Level Progress
+        Write-BTRLog "Installed $TemplateName on $VMName" -Level Progress
     }
+
+    #Create Certifciate for web server
+    Write-BTRLog "Creating certificate for web server"
+    $Error.Clear()
+    Invoke-Command -VMName $Instance.DomainController -Credential $DomainCreds -ScriptBlock {
+        Get-Certificate -Url "LDAP:" -Template "$($Using:Instance.Name) Web" -SubjectName "CN=PKI.$($Using:Instance.DomainName)" -DnsName @("PKI.$($Using:Instance.DomainName)","PKI","$($env:COMPUTERNAME).$($Using:Instance.DomainName)","$($env:COMPUTERNAME)") -CertStoreLocation Cert:\LocalMachine\My 2>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to get SSL Cert" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Retreived SSL cert for web server" -Level Progress
+    }
+
+    #Install Certificate Authority Web Enrollment
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Add-WindowsFeature ADCS-Web-Enrollment -IncludeManagementTools 2>&1 | Out-Null
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to install CA web Enrollment role" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Install CA Web Enrollment role" -Level Progress
+    }
+    
+    #Configure Certificate Authority Web Enrollment
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Try {
+            Install-AdcsWebEnrollment -Confirm:$False -Force 
+        }Catch{
+            #Just to shut it up
+        }
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to configure CA web Enrollment role" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "Configured CA Web Enrollment role" -Level Progress
+    }
+
+    #Add port 443 binding for default web site
+    Write-BTRLog "Adding SSL binding to default web site"
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        $Thumbprint = Get-ChildItem Cert:\LocalMachine\My | Where Subject -eq "CN=PKI.$($Using:Instance.DomainName)" | Select -ExpandProperty Thumbprint
+        Import-Module IISAdministration
+        New-IISSiteBinding -Name "Default Web Site" -BindingInformation "*:443:" -CertificateThumbPrint $Thumbprint -Protocol https -CertStoreLocation Cert:\LocalMachine\My
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to add SLL binding to default website" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success" -Level Debug
+    }
+
+    #Require SSL on CertSrv folder
+    Write-BTRLog "Adding SSL binding to default web site"
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        $Thumbprint = Get-ChildItem Cert:\LocalMachine\My | Where Subject -eq "CN=PKI.$($Using:Instance.DomainName)" | Select -ExpandProperty Thumbprint
+        Import-Module IISAdministration
+        $ConfigSection = Get-IISConfigSection -SectionPath "system.webServer/security/access" -Location "Default Web Site/CertSrv"
+        Set-IISConfigAttributeValue -AttributeName sslFlags -AttributeValue Ssl -ConfigElement $ConfigSection
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to add SLL binding to default website" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success" -Level Debug
+    }
+
+    #redirect default to /CertSrv
+    Write-BTRLog "Setting redirect to /CertSrv"
+    $Error.Clear()
+    Invoke-Command -VMName $VMName -Credential $DomainCreds -ScriptBlock {
+        Import-Module IISAdministration
+        Get-IISConfigSection -SectionPath "system.webServer/httpRedirect" -Location "Default Web Site" | Set-IISConfigAttributeValue -AttributeName enabled -AttributeValue $True
+        Get-IISConfigSection -SectionPath "system.webServer/httpRedirect" -Location "Default Web Site" | Set-IISConfigAttributeValue -AttributeName destination -AttributeValue "https://pki.catest.local/CertSrv"
+        Get-IISConfigSection -SectionPath "system.webServer/httpRedirect" -Location "Default Web Site" | Set-IISConfigAttributeValue -AttributeName childOnly -AttributeValue $False
+    }
+    If ($Error) {
+        Write-BTRLog "Failed to add SLL binding to default website" -Level Error
+        Return $False
+    }Else{
+        Write-BTRLog "     Success" -Level Debug
+    }
+
+    ##Copy PKI GPO
+    #$GPOFolder = "$PSScriptRoot\CertificateAuthority\PKI GPO\"
+    #Write-BTRLog "Copying PSPKI from $GPOFolder to C:\Temp" -Level Debug
+    #$Error.Clear
+    #Get-ChildItem $GPOFolder -Recurse -File | ForEach {Copy-VMFile -Name $VMName -SourcePath $_.FullName -DestinationPath $_.FullName.replace($GPOFolder,"C:\Temp\") -FileSource Host -CreateFullPath -Force }
+    #If ($Error) {
+    #    Write-BTRLog "  Failed to copy PKI GPO folder" -Level Error
+    #    Return $False
+    #}Else{
+    #    Write-BTRLog "   Success!" -Level Progress
+    #}
 
 
 }
