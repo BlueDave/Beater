@@ -927,66 +927,66 @@ Function New-cBTRBaseImage {
         $CustomizeImage = $False
     }
     
-    #Create ISO
-    If (Create-BTRISO -Instance $Instance -BaseImage $NewBaseImage) {
-        Write-BTRLog "Created ISO " -Level Progress
-    }Else{
-        Write-BTRLog "Failed to create ISO" -Level Error
-        Return $False
-    }
-    
-    #Create VM for base image
-    If (!(Create-BTRBaseVM -Instance $Instance -BaseImage $NewBaseImage)) {
-        Write-BTRLog "Failed to create VM for $($NewBaseImage.Name)." -Level Error
-        Return $False
-    }
-    
-    Write-BTRLog "Base VM created. Waiting 5 seconds for VM to stabilize." -Level Progress
-    Start-Sleep -Seconds 5
-    
-    Write-BTRLog "Starting VM" -Level Progress
-    $Error.Clear()
-    Hyper-V\Start-VM -VMName $NewBaseImage.Name -ErrorAction SilentlyContinue
-    If ($Error) {
-        Write-BTRLog "Unable to start VM $($NewBaseImage.Name). Error: $($Error[0].Exception.Message)." -Level Error
-        Return $False
-    }Else{
-        Write-BTRLog "   Success" -Level Debug
-    }
-    
-    #Wait for VM to come online
-    If (!(Wait-BTRVMOnline -Instance $Instance -VMName $NewBaseImage.Name)) {
-        Write-BTRLog "$($BaseImage.Name) never came online" -Level Error
-        Return $False
-    }
-    
-    #Configure Base VM
-    Write-BTRLog "Configuring base image" -Level Progress
-    If (Configure-BTRBaseImage -Instance $Instance -BaseImage $NewBaseImage) {
-        Write-BTRLog "Configured base image" -Level Progress
-    }Else{
-        Write-BTRLog "Failed to configure base image" -Level Error
-        Return $False
-    }
-    
-    #Wait for VM to update and reboot
-    Write-BTRLog "Waiting for updates to finish and VM to reboot" -Level Progress
-    If (!(Wait-BTRVMOffline -Instance $Instance -VMName $NewBaseImage.Name)) {
-        Write-BTRLog "$($NewBaseImage.Name) isn't shutting down." -Level Error
-        Return $False
-    }
-    
-    Write-BTRLog "Waiting for vm to finish reboot" -Level Progress
-    If (!(Wait-BTRVMOnline -Instance $Instance -VMName $NewBaseImage.Name)) {
-        Write-BTRLog "$($NewBaseImage.Name) isn't comming up." -Level Error
-        Return $False
-    }
-    
-    #Pause for customization
-    If ($CustomizeImage) {
-        Write-Host "Base image deployement is done.  Go ahead and customize it."
-        Read-Host "Hit any key to continue"
-    }
+   #Create ISO
+   If (Create-BTRISO -Instance $Instance -BaseImage $NewBaseImage) {
+       Write-BTRLog "Created ISO " -Level Progress
+   }Else{
+       Write-BTRLog "Failed to create ISO" -Level Error
+       Return $False
+   }
+   
+   #Create VM for base image
+   If (!(Create-BTRBaseVM -Instance $Instance -BaseImage $NewBaseImage)) {
+       Write-BTRLog "Failed to create VM for $($NewBaseImage.Name)." -Level Error
+       Return $False
+   }
+   
+   Write-BTRLog "Base VM created. Waiting 5 seconds for VM to stabilize." -Level Progress
+   Start-Sleep -Seconds 5
+   
+   Write-BTRLog "Starting VM" -Level Progress
+   $Error.Clear()
+   Hyper-V\Start-VM -VMName $NewBaseImage.Name -ErrorAction SilentlyContinue
+   If ($Error) {
+       Write-BTRLog "Unable to start VM $($NewBaseImage.Name). Error: $($Error[0].Exception.Message)." -Level Error
+       Return $False
+   }Else{
+       Write-BTRLog "   Success" -Level Debug
+   }
+   
+   #Wait for VM to come online
+   If (!(Wait-BTRVMOnline -Instance $Instance -VMName $NewBaseImage.Name)) {
+       Write-BTRLog "$($BaseImage.Name) never came online" -Level Error
+       Return $False
+   }
+   
+   #Configure Base VM
+   Write-BTRLog "Configuring base image" -Level Progress
+   If (Configure-BTRBaseImage -Instance $Instance -BaseImage $NewBaseImage) {
+       Write-BTRLog "Configured base image" -Level Progress
+   }Else{
+       Write-BTRLog "Failed to configure base image" -Level Error
+       Return $False
+   }
+   
+   #Wait for VM to update and reboot
+   Write-BTRLog "Waiting for updates to finish and VM to reboot" -Level Progress
+   If (!(Wait-BTRVMOffline -Instance $Instance -VMName $NewBaseImage.Name)) {
+       Write-BTRLog "$($NewBaseImage.Name) isn't shutting down." -Level Error
+       Return $False
+   }
+   
+   Write-BTRLog "Waiting for vm to finish reboot" -Level Progress
+   If (!(Wait-BTRVMOnline -Instance $Instance -VMName $NewBaseImage.Name)) {
+       Write-BTRLog "$($NewBaseImage.Name) isn't comming up." -Level Error
+       Return $False
+   }
+   
+   #Pause for customization
+   If ($CustomizeImage) {
+       Write-Host "Base image deployement is done.  Go ahead and customize it."
+       Read-Host "Hit any key to continue"
+   }
     
     #Prep Base image
     Write-BtrLog "Prepping base image" -level Progress
